@@ -1,19 +1,59 @@
 % restart
 close all; clear all; clc;
 
-% initialize true state and estimate
-xt = [ 0.20 0.40 0.40 0.60 -pi/6 pi/2 ]';
-x0 = [ 0.30 0.40 0.50 0.50 pi/12 pi/3 ]';
+% initialize true state (x_t)
+xt = [ 0.25 0.45 0.45 0.65 -pi/6 pi/2 ]';
 
-% initialize covariance matrix
-P = eye(length(x0));
+% initialize state estimate (x) and covariance matrix (P)
+x0 = [ 0.35 0.45 0.55 0.55 pi/12 pi/3 ]';
+P0 = eye(length(x0));
+x_prev = x0;
+P_prev = P0;
+
+% initialize state and measurement covariances
+R = eye(length(x0)); % state noise covariance following Thrun, et al.
+Q = eye(length(x0)); % measurement noise covariance following Thrun, et al.
 
 % iterate through horizon levels
-for revealLevel = 0:0.05:1.2
+for revealLevel = 0:0.01:1.2
 
+    % compute Jacobian of state transition function
+    F = eye(length(x_prev));
+    
+    % prediction step: propigate dynamics forward in time
+    x = x_prev;
+    P = F*P_prev*F' + R;
+    
+    % compute measurement jacobian
+    H = [
+        1 0 0         0               0                    0;
+        0 1 0         0               0                    0;
+        1 0 cos(x(5)) 0              -x(3)*sin(x(5))       0;
+        0 1 sin(x(5)) 0               x(3)*cos(x(5))       0;
+        1 0 0         cos(x(5)+x(6)) -x(4)*sin(x(5)+x(6)) -x(4)*sin(x(5)+x(6));
+        0 1 0         sin(x(5)+x(6))  x(4)*cos(x(5)+x(6))  x(4)*cos(x(5)+x(6))];
+
+    % generate an observation
+    z_true = simpleRevealObsModel2d( xt );
+    z = -1*ones(size(z_true));
+    for pointIdx = 1:(length(z_true)/2)
+        xIdx = 2*pointIdx - 1;
+        yIdx = xIdx + 1;
+       if( z_true(yIdx) < revealLevel )
+           z(xIdx) = z_true(xIdx);
+           z(yIdx) = z_true(yIdx);
+       end
+    end
+    z
+    
     % display current estimate and true state
-    plotRevealModel2d( x0, xt, revealLevel);
+    plotRevealModel2d( x, xt, revealLevel);
 
+    
+    
+    % increment to next timestep
+    x_prev = x;
+    P_prev = P;
 end
 
 % convert model parameters into (x,y) locations of each point
