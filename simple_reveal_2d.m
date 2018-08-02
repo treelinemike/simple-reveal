@@ -10,11 +10,13 @@ P = eye(length(x0));
 
 % iterate through horizon levels
 for revealLevel = 0:0.05:1.2
-    
+
+    % display current estimate and true state
     plotRevealModel2d( x0, xt, revealLevel);
-%     pause(0.1);
+
 end
 
+% convert model parameters into (x,y) locations of each point
 function z = simpleRevealObsModel2d( x )
 
 x0 = x(1);
@@ -28,24 +30,32 @@ z = [x0,y0,x1,y1,x2,y2]';
 
 end
 
+% display estimated and true models along with current level of occlusion
 function plotRevealModel2d( estParams, trueParams, horizonLevel )
 colors = [1 0 0; 0 0 1];
 modelParams = {estParams,trueParams};
 
-ploth = [];
-
+% switch to animation figure and turn hold off
 figure(1);
 set(gcf,'Position',[1.034000e+02 1.922000e+02 3.896000e+02 0508]);
 hold off;
+ploth = []; % storage for plot handles
 
+% plot estimated and true models
 for modelIdx = 1:length(modelParams)
+    
+    % get color settings and model parameters
     thisColor = colors(modelIdx,:);
     thisModel = modelParams{modelIdx};
+    
+    % convert model parameters to x,y locations of each point
     z = simpleRevealObsModel2d(thisModel);
     
+    % plot a dummy point for correctly-scaled legend entry
     ploth(end+1) = plot(NaN,NaN,'.-','MarkerSize',25,'LineWidth',2,'Color',thisColor);
     hold on; grid on;
     
+    % plot model
     plot(z([5 1 3]) ,z([6 2 4]),'.-','MarkerSize',75,'LineWidth',2,'Color',thisColor);
     
 end
