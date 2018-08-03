@@ -1,14 +1,21 @@
 % restart
 close all; clear all; clc;
 
+% settings
+maxHorizonLevel = 1.0;
+doSaveFrames = 0;
+
+% initialize frame count
+frameCount = 0;
+
 % data storage
 estError = [];
 
 % initialize true state (x_t)
-xt = [ 0.25 0.55 0.45 0.65 -pi/6 pi/2 ]';
+xt = [ 0.25 0.35 0.45 0.65 -pi/6 pi/2 ]';
 
 % initialize state estimate (x) and covariance matrix (P)
-x0 = [ 0.35 0.45 0.55 0.55 pi/12 pi/3 ]';
+x0 = [ 0.35 0.25 0.55 0.55 pi/12 pi/3 ]';
 P0 = eye(length(x0));
 x_prev = x0;
 P_prev = P0;
@@ -18,7 +25,7 @@ R = eye(length(x0)); % state noise covariance following Thrun, et al.
 Q = eye(length(x0)); % measurement noise covariance following Thrun, et al.
 
 % iterate through horizon levels
-for revealLevel = 0:0.01:1.2
+for revealLevel = 0:0.01:maxHorizonLevel
     
     % compute Jacobian of state transition function
     F = eye(length(x_prev));
@@ -72,17 +79,28 @@ for revealLevel = 0:0.01:1.2
     plotRevealModel2d( x, xt, revealLevel);
     
     rmse = computeReveal2dError(x,xt);
-    disp(sprintf('RMSE = %f',rmse));
     estError(end+1,:) = [revealLevel rmse];
     
-    figure(2);
-    set(gcf,'Position',[0589 0225 0560 0420]);
-    grid on;
+    figure(1);
+    subplot(4,1,4);
     plot(estError(:,1),estError(:,2),'b-','LineWidth',1.6);
     xlabel('\bfHorizon Level');
     ylabel('\bfRMSE');
-    xlim([0 1.5]);
-    ylim([0 0.5]);
+    xlim([0 maxHorizonLevel]);
+    ylim([0 0.35]);
+    grid on;
+    
+    % save frames for animation
+    % then convert - not in MATLAB although could use system() command - using a codec compatible with LaTeX (Beamer)
+    % see: https://tex.stackexchange.com/questions/141622/trouble-using-ffmpeg-to-encode-a-h264-video-in-a-mp4-container-to-use-with-medi
+    % first download FFMPEG for windows: https://ffmpeg.zeranoe.com/builds/ OR https://www.ffmpeg.org/download.html
+    % ffmpeg -r 10 -start_number 1 -i frame%003d.png -vf scale="trunc(iw/2)*2:trunc(ih/2)*2" -c:v libx264 -profile:v high -pix_fmt yuv420p -g 25 -r 25 output.mp4
+    
+    if(doSaveFrames)
+        saveas(gcf,sprintf('frame%03d.png',frameCount));
+        frameCount = frameCount + 1;
+    end
+    
     
     % increment to next timestep
     x_prev = x;
@@ -115,7 +133,11 @@ markerSizes = [75,60];
 
 % switch to animation figure and turn hold off
 figure(1);
-set(gcf,'Position',[1.034000e+02 1.922000e+02 3.896000e+02 0508]);
+% set(gcf,'Position',[1.034000e+02 1.922000e+02 3.896000e+02 5.080000e+02]);
+% set(gcf,'Position',[1.034000e+02 0069 3.896000e+02 6.984000e+02]);
+set(gcf,'Position',[1.034000e+02 2.274000e+02 0356 0540]);
+subplot(4,1,1:3);
+
 hold off;
 ploth = []; % storage for plot handles
 
@@ -142,14 +164,14 @@ end
 ploth(end+1) = patch([0 1 1 0], [horizonLevel horizonLevel 1.4 1.4],'k','FaceAlpha',0.2,'EdgeColor','none');
 
 % add legend, scale axes, and draw plot
-legh = legend(ploth,{'Estimate','Truth','Occlusion'},'Location','northoutside','Orientation','horizontal','FontWeight','bold');
-ylim([0 1.4]);
+legh = legend(ploth,{'Truth','Estimate','Occlusion'},'Location','northoutside','Orientation','horizontal','FontWeight','bold');
+ylim([0 1.2]);
 axis equal;
 xlim([0 1]);
 axh = gca;
 axh.XAxis.Visible = 'off';
 axh.YAxis.Visible = 'off';
-legh.Position = legh.Position + [0.02 0.04 0 0];
+legh.Position = legh.Position + [0.08 0.04 0 0];
 drawnow;
 
 end
