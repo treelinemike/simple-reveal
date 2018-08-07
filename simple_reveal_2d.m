@@ -16,7 +16,9 @@ obsCounts = zeros(3,1);
 xt = [ 0.25 0.35 0.45 0.65 -pi/6 pi/2 ]';
 
 % initialize state estimate (x) and covariance matrix (P)
-x0 = [ 0.35 0.25 0.55 0.55 pi/12 pi/3 ]';
+% x0 = [ 0.35 0.25 0.55 0.55 pi/12 pi/3 ]';
+% x0 = [ 0.80 0.45 0.35 0.35 -9*pi/8 3*pi/2 ]';
+x0 = [ 0.80 0.25 0.5 0.25 3*pi/8 pi/4 ]';
 P0 = 0.1*eye(length(x0));
 x_prev = x0;
 P_prev = P0;
@@ -67,19 +69,19 @@ for revealLevel = 0:0.01:maxHorizonLevel
         H_i = H([xIdx yIdx],:);
         R_i = R([xIdx yIdx],[xIdx yIdx]);
         
-        % integrate observation 
-        if((z_i(2) <= revealLevel) || (z_hat_i(2) <= revealLevel))
+        % push model along y axis if 
+        if( (z_hat_i(2) <= revealLevel) && (z_i(2) > revealLevel))
+%                 z_i = [z_hat_i(1) revealLevel+(revealLevel-z_hat_i(2))];
+%                 disp(['Trying to push model to ' sprintf('(%f,%f)',z_i(1),z_i(2)) ]);
+%                 R_i = 50*R_i;
+                
+%                 delta_z = zeros(size(z_full));
+%                 delta_z(yIdx) = revealLevel-z_hat_full(yIdx);
+%                 x_synth = x + inv(H)*delta_z;
+%                 x = x_synth;
+                
+        elseif((z_i(2) <= revealLevel) || (z_hat_i(2) <= revealLevel))
             
-            % handle negative information by generating a synthetic
-            % observation at horizon
-            if( (z_hat_i(2) <= revealLevel) && (z_i(2) > revealLevel))
-                z_i = [z_hat_i(1) revealLevel+(revealLevel-z_hat_i(2))];
-                disp(['Trying to push model to ' sprintf('(%f,%f)',z_i(1),z_i(2)) ]);
-                R_i = 50*R_i;
-            end
-            
-            
-%             if( (z_i(2) > revealLevel) || obsCounts(pointIdx) == 0)
                 
             
             % update state and error covariance
@@ -88,7 +90,6 @@ for revealLevel = 0:0.01:maxHorizonLevel
             innov2 = sign(innov).*(abs(innov).^1);
             x = x + K*innov2;
             P = (eye(size(K,1))-K*H_i)*P;
-%             end
             
             % increment number of times this point has been seen for
             % attenuation
@@ -110,7 +111,7 @@ for revealLevel = 0:0.01:maxHorizonLevel
     xlabel('\bfHorizon Level');
     ylabel('\bfRMSE');
     xlim([0 maxHorizonLevel]);
-    ylim([0 0.35]);
+    ylim([0 0.65]);
     grid on;
     
     % save frames for animation
