@@ -10,19 +10,20 @@ frameCount = 0;
 
 % data storage
 estError = [];
+obsCounts = zeros(3,1);
 
 % initialize true state (x_t)
 xt = [ 0.25 0.35 0.45 0.65 -pi/6 pi/2 ]';
 
 % initialize state estimate (x) and covariance matrix (P)
 x0 = [ 0.35 0.25 0.55 0.55 pi/12 pi/3 ]';
-P0 = eye(length(x0));
+P0 = 0.1*eye(length(x0));
 x_prev = x0;
 P_prev = P0;
 
 % initialize state and measurement covariances
-R = eye(length(x0)); % state noise covariance following Thrun, et al.
-Q = eye(length(x0)); % measurement noise covariance following Thrun, et al.
+Q = 0.1*eye(length(x0)); % process noise covariance (note: Thrun, et al. calls this R!)
+R = 0.1*eye(length(x0)); % measurement noise covariance (note: Thrun, et al. calls this Q!)
 
 % iterate through horizon levels
 for revealLevel = 0:0.01:maxHorizonLevel
@@ -32,7 +33,7 @@ for revealLevel = 0:0.01:maxHorizonLevel
     
     % prediction step: propigate dynamics forward in time
     x = x_prev;
-    P = F*P_prev*F' + R;
+    P = F*P_prev*F' + Q;
     
     % compute measurement jacobian
     H = [
@@ -58,20 +59,42 @@ for revealLevel = 0:0.01:maxHorizonLevel
     for pointIdx = 1:(length(z_full)/2)
         xIdx = 2*pointIdx - 1;
         yIdx = xIdx + 1;
-        if( z_full(yIdx) < revealLevel )
+
+        % generate observation and expected observation for this single point
+        z_i =     [z_full(xIdx) z_full(yIdx)]';
+        z_hat_full = simpleRevealObsModel2d( x );  % expected observation based on current model; this could probably be pre-computed for each timestep (don't recalculate between measurement updates at same timestep) - not sure whether results will differ        
+        z_hat_i = [z_hat_full(xIdx) z_hat_full(yIdx)]';
+        H_i = H([xIdx yIdx],:);
+        R_i = R([xIdx yIdx],[xIdx yIdx]);
+        
+        % integrate observation 
+        if((z_i(2) <= revealLevel) || (z_hat_i(2) <= revealLevel))
+            
+            % handle negative information by generating a synthetic
+            % observation at horizon
+            if( (z_hat_i(2) <= revealLevel) && (z_i(2) > revealLevel))
+                z_i = [z_hat_i(1) revealLevel+(revealLevel-z_hat_i(2))];
+                disp(['Trying to push model to ' sprintf('(%f,%f)',z_i(1),z_i(2)) ]);
+                R_i = 50*R_i;
+            end
             
             
-            z_i =     [z_full(xIdx) z_full(yIdx)]';
-            z_hat_full = simpleRevealObsModel2d( x );  % expected observation based on current model
+%             if( (z_i(2) > revealLevel) || obsCounts(pointIdx) == 0)
+                
             
-            z_hat_i = [z_hat_full(xIdx) z_hat_full(yIdx)]';
-            
-            H_i = H([xIdx yIdx],:);
-            Q_i = Q([xIdx yIdx],[xIdx yIdx]);
-            
-            K = P*H_i'*inv(H_i*P*H_i'+Q_i);
-            x = x + K*(z_i - z_hat_i);
+            % update state and error covariance
+            K = P*H_i'*inv(H_i*P*H_i'+R_i);
+            innov = (z_i - z_hat_i);
+            innov2 = sign(innov).*(abs(innov).^1);
+            x = x + K*innov2;
             P = (eye(size(K,1))-K*H_i)*P;
+%             end
+            
+            % increment number of times this point has been seen for
+            % attenuation
+            if( (z_i(2) <= revealLevel) )
+                obsCounts(pointIdx) =  obsCounts(pointIdx) + 1;
+            end
         end
     end
     
