@@ -4,7 +4,13 @@ close all; clear all; clc;
 % settings
 maxHorizonLevel = 1.0;
 doSaveFrames = 0;
-doProjectUnobservedEstimatesToHorizon = 1;
+doProjectUnobservedEstimatesToHorizon = 0;
+doIllustrateObs = 0;
+
+% choose an estimation scheme
+ESTIMATOR_EKF = 1;
+ESTIMATOR_EIF = 2;
+estimationScheme = ESTIMATOR_EIF;
 
 % initialize frame count
 frameCount = 0;
@@ -17,85 +23,194 @@ obsCounts = zeros(3,1);
 xt = [ 0.25 0.35 0.45 0.65 -pi/6 pi/2 ]';
 
 % initialize state estimate (x) and covariance matrix (P)
-x0 = [ 0.35 0.25 0.55 0.55 pi/12 pi/3 ]';
+% x0 = [ 0.35 0.25 0.55 0.55 pi/12 pi/3 ]';
 % x0 = [ 0.80 0.45 0.35 0.35 -9*pi/8 3*pi/2 ]';
-% x0 = [ 0.80 0.25 0.5 0.25 3*pi/8 pi/4 ]';
+x0 = [ 0.80 0.25 0.5 0.25 3*pi/8 pi/4 ]';
 P0 = 0.1*eye(length(x0));
 x_prev = x0;
 P_prev = P0;
 
+% initalize information filter variables
 % initialize state and measurement covariances
-Q = 0.1*eye(length(x0)); % process noise covariance (note: Thrun, et al. calls this R!)
-R = 0.1*eye(length(x0)); % measurement noise covariance (note: Thrun, et al. calls this Q!)
-
+switch(estimationScheme)
+    case ESTIMATOR_EKF
+        Q = 0.1*eye(length(x0)); % process noise covariance (note: Thrun, et al. calls this R!)
+        R = 0.1*eye(length(x0)); % measurement noise covariance (note: Thrun, et al. calls this Q!)
+    case ESTIMATOR_EIF
+        M_prev = eye(length(x_prev)); % Omega; Information matrix
+        xi_prev = M_prev*x_prev;   % xi; information vector
+        Q = 0*eye(length(x0));
+        R = 0.01*eye(length(x0));
+end
 % iterate through horizon levels
 for revealLevel = 0:0.01:maxHorizonLevel
     
-    % compute Jacobian of state transition function
-    F = eye(length(x_prev));
     
-    % PREDICTION STEP
-    % propigate dynamics and error covariance forward in time
-    x = x_prev;
-    P = F*P_prev*F' + Q;
-    
-    % compute measurement jacobian
-    H = [
-        1 0 0         0               0                    0;
-        0 1 0         0               0                    0;
-        1 0 cos(x(5)) 0              -x(3)*sin(x(5))       0;
-        0 1 sin(x(5)) 0               x(3)*cos(x(5))       0;
-        1 0 0         cos(x(5)+x(6)) -x(4)*sin(x(5)+x(6)) -x(4)*sin(x(5)+x(6));
-        0 1 0         sin(x(5)+x(6))  x(4)*cos(x(5)+x(6))  x(4)*cos(x(5)+x(6))
-        ];
-    
-    % generate an observation
-    z_full = simpleRevealObsModel2d( xt );     % full observation is an error-free measurement of all point (x,y) values
-    
-    % examine each (x,y) pair in the observation
-    for pointIdx = 1:(length(z_full)/2)
-        
-        % coordinates of the current (x,y) pair
-        xIdx = 2*pointIdx - 1;
-        yIdx = xIdx + 1;
-        
-        % create a 2-component observation vector, expected observation,
-        % and reduce the Jacobian of the measurement model appropriately
-        % an alternate approach would be to simply discard unobserved
-        % points from z_full and remove the corresponding columns from the
-        % H matrix to avoid incremental processing... I believe that this
-        % should have the same result
-        z_i =     [z_full(xIdx) z_full(yIdx)]';
-        z_hat_full = simpleRevealObsModel2d( x );  % expected observation based on current model; this could probably be pre-computed for each timestep (don't recalculate between measurement updates at same timestep) - think the approaches may be equivalent
-        z_hat_i = [z_hat_full(xIdx) z_hat_full(yIdx)]';
-        H_i = H([xIdx yIdx],:);
-        R_i = R([xIdx yIdx],[xIdx yIdx]);
-        
-        % push model along y axis to horizon if point not observed
-        if( (z_hat_i(2) <= revealLevel) && (z_i(2) > revealLevel) && doProjectUnobservedEstimatesToHorizon)
+    switch(estimationScheme)
+        case ESTIMATOR_EIF
             
-                delta_z = zeros(size(z_full));
-                delta_z(yIdx) = revealLevel-z_hat_full(yIdx);
-                x_synth = x + inv(H)*delta_z;
-                x = x_synth;
-        
-        % if point is observed run the normal EKF update
-        elseif((z_i(2) <= revealLevel) || (z_hat_i(2) <= revealLevel))
-          
-            % CORRECTION STEP
-            % update state and error covariance
-            K = P*H_i'*inv(H_i*P*H_i'+R_i);
-            innov = (z_i - z_hat_i);
-            x = x + K*innov;
-            P = (eye(size(K,1))-K*H_i)*P;
+            % PREDICT STEP
+            % recover previous state estimate
+            x_prev = inv(M_prev)*xi_prev;
             
-            % increment number of times this point has been seen for
-            % attenuation
-            if( (z_i(2) <= revealLevel) )
-                obsCounts(pointIdx) =  obsCounts(pointIdx) + 1;
+            % compute process Jacobian and a priori information matrix
+            F = eye(length(x_prev));
+            M = inv(F*inv(M_prev)*F'+Q);
+            
+            % compute a priori state estimate and information vector
+            x = x_prev; %f(x) = x ... static system
+            xi = M*x;
+            
+            % compute measurement Jacobian
+            H = [
+                1 0 0         0               0                    0;
+                0 1 0         0               0                    0;
+                1 0 cos(x(5)) 0              -x(3)*sin(x(5))       0;
+                0 1 sin(x(5)) 0               x(3)*cos(x(5))       0;
+                1 0 0         cos(x(5)+x(6)) -x(4)*sin(x(5)+x(6)) -x(4)*sin(x(5)+x(6));
+                0 1 0         sin(x(5)+x(6))  x(4)*cos(x(5)+x(6))  x(4)*cos(x(5)+x(6))
+                ];
+            
+            % generate an observation
+            z_full = simpleRevealObsModel2d( xt );     % full observation is an error-free measurement of all point (x,y) values
+            
+            % initialize update accumulation variables
+            Msum = zeros(size(M));
+            xisum = zeros(size(xi));
+            sumIdx = 0;
+            
+            % examine each (x,y) pair in the observation
+            for pointIdx = 1:(length(z_full)/2)
+                
+                % coordinates of the current (x,y) pair
+                xIdx = 2*pointIdx - 1;
+                yIdx = xIdx + 1;
+                
+                % create a 2-component observation vector, expected observation,
+                % and reduce the Jacobian of the measurement model appropriately
+                % an alternate approach would be to simply discard unobserved
+                % points from z_full and remove the corresponding rows from the
+                % H matrix to avoid incremental processing... I believe that this
+                % should have the same result
+                z_i = [z_full(xIdx) z_full(yIdx)]';
+                z_hat_full = simpleRevealObsModel2d( x );  % expected observation based on current model; this could probably be pre-computed for each timestep (don't recalculate between measurement updates at same timestep) - think the approaches may be equivalent
+                z_hat_i = [z_hat_full(xIdx) z_hat_full(yIdx)]';
+                H_i = H([xIdx yIdx],:);
+                R_i = R([xIdx yIdx],[xIdx yIdx]);
+                
+                % perform update if true feature is visible
+                if((z_i(2) <= revealLevel))
+                   
+                    
+                    % illustrate observation
+                    if(doIllustrateObs)
+                        figure(1);
+                        subplot(4,1,1:3);
+                        hold off;
+                        plotRevealModel2d( x, xt, revealLevel);
+                        hold on; grid on;
+                        plot(z_i(1),z_i(2),'go','MarkerSize',20,'LineWidth',2);
+                        plot(z_hat_i(1),z_hat_i(2),'g*','MarkerSize',20,'LineWidth',2);
+                        pause(1)
+                    end
+                    
+                    % add to measurement update information matrix and vector
+                    Msum = Msum + H_i'*inv(R_i)*H_i;
+                    xisum = xisum + H_i'*inv(R_i)*(z_i-z_hat_i+H_i*x);
+                    sumIdx = sumIdx + 1;
+                end
             end
-        end
+            
+            % CORRECTION STEP
+            % apply measurement update if we actually made measurements
+            if(sumIdx ~= 0)
+                disp('applying updates');
+                M = M + Msum;
+                xi = xi + xisum;
+            end
+            
+            P = inv(M);
+            x = P*xi;
+            P_prev = P;
+            x_prev = x;
+            M_prev = M;
+            xi_prev = xi;
+            
+            
+        case ESTIMATOR_EKF
+            
+            % compute Jacobian of state transition function
+            F = eye(length(x_prev));
+            
+            % PREDICTION STEP
+            % propigate dynamics and error covariance forward in time
+            x = x_prev;
+            P = F*P_prev*F' + Q;
+            
+            % compute measurement jacobian
+            H = [
+                1 0 0         0               0                    0;
+                0 1 0         0               0                    0;
+                1 0 cos(x(5)) 0              -x(3)*sin(x(5))       0;
+                0 1 sin(x(5)) 0               x(3)*cos(x(5))       0;
+                1 0 0         cos(x(5)+x(6)) -x(4)*sin(x(5)+x(6)) -x(4)*sin(x(5)+x(6));
+                0 1 0         sin(x(5)+x(6))  x(4)*cos(x(5)+x(6))  x(4)*cos(x(5)+x(6))
+                ];
+            
+            % generate an observation
+            z_full = simpleRevealObsModel2d( xt );     % full observation is an error-free measurement of all point (x,y) values
+            
+            % examine each (x,y) pair in the observation
+            for pointIdx = 1:(length(z_full)/2)
+                
+                % coordinates of the current (x,y) pair
+                xIdx = 2*pointIdx - 1;
+                yIdx = xIdx + 1;
+                
+                % create a 2-component observation vector, expected observation,
+                % and reduce the Jacobian of the measurement model appropriately
+                % an alternate approach would be to simply discard unobserved
+                % points from z_full and remove the corresponding rows from the
+                % H matrix to avoid incremental processing... I believe that this
+                % should have the same result
+                z_i =     [z_full(xIdx) z_full(yIdx)]';
+                z_hat_full = simpleRevealObsModel2d( x );  % expected observation based on current model; this could probably be pre-computed for each timestep (don't recalculate between measurement updates at same timestep) - think the approaches may be equivalent
+                z_hat_i = [z_hat_full(xIdx) z_hat_full(yIdx)]';
+                H_i = H([xIdx yIdx],:);
+                R_i = R([xIdx yIdx],[xIdx yIdx]);
+                          
+                % push model along y axis to horizon if point not observed
+                if( (z_hat_i(2) <= revealLevel) && (z_i(2) > revealLevel) && doProjectUnobservedEstimatesToHorizon)
+                    
+                    delta_z = zeros(size(z_full));
+                    delta_z(yIdx) = revealLevel-z_hat_full(yIdx)
+                    x_synth = x + inv(H)*delta_z
+                    x = x_synth
+                    forceObs = 1;
+                end
+                
+                if((z_i(2) <= revealLevel))
+                    
+                    % CORRECTION STEP
+                    % update state and error covariance
+                    K = P*H_i'*inv(H_i*P*H_i'+R_i);
+                    innov = (z_i - z_hat_i);
+                    x = x + K*innov;
+                    P = (eye(size(K,1))-K*H_i)*P;
+                    
+                end
+            end
+            
+            % increment to next timestep
+            x_prev = x;
+            P_prev = P;
+            
+        otherwise
+            disp('Invalid assimilation algorithm choice.');
     end
+    
+    
+    
     
     % display current estimate and true state
     plotRevealModel2d( x, xt, revealLevel);
@@ -114,8 +229,11 @@ for revealLevel = 0:0.01:maxHorizonLevel
     ylim([0 0.65]);
     grid on;
     
+    
     % update plot
-    drawnow;
+%     drawnow;
+    
+    
     
     % save frames for animation
     % then convert - not in MATLAB although could use system() command - using a codec compatible with LaTeX (Beamer)
@@ -127,9 +245,14 @@ for revealLevel = 0:0.01:maxHorizonLevel
         frameCount = frameCount + 1;
     end
     
-    % increment to next timestep
-    x_prev = x;
-    P_prev = P;
+    % show covariance or information matrix
+    figure(2);
+    switch estimationScheme
+        case ESTIMATOR_EKF
+            image(P);
+        case ESTIMATOR_EIF
+            image(M);
+    end
     
 end
 
