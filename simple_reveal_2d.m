@@ -5,12 +5,12 @@ close all; clear all; clc;
 maxHorizonLevel = 1.0;
 doSaveFrames = 0;
 doProjectUnobservedEstimatesToHorizon = 0;
-doIllustrateObs = 0;
+doIllustrateObs = 1;
 
 % choose an estimation scheme
 ESTIMATOR_EKF = 1;
 ESTIMATOR_EIF = 2;
-estimationScheme = ESTIMATOR_EIF;
+estimationScheme = ESTIMATOR_EKF;
 
 % initialize frame count
 frameCount = 0;
@@ -26,7 +26,7 @@ xt = [ 0.25 0.35 0.45 0.65 -pi/6 pi/2 ]';
 % x0 = [ 0.35 0.25 0.55 0.55 pi/12 pi/3 ]';
 % x0 = [ 0.80 0.45 0.35 0.35 -9*pi/8 3*pi/2 ]';
 x0 = [ 0.80 0.25 0.5 0.25 3*pi/8 pi/4 ]';
-P0 = 0.1*eye(length(x0));
+P0 = diag([0.25 0.25 0.25 0.25 pi/8 pi/8]); %1*ones(length(x0));%0.1*eye(length(x0));
 x_prev = x0;
 P_prev = P0;
 
@@ -34,11 +34,14 @@ P_prev = P0;
 % initialize state and measurement covariances
 switch(estimationScheme)
     case ESTIMATOR_EKF
-        Q = 0.1*eye(length(x0)); % process noise covariance (note: Thrun, et al. calls this R!)
-        R = 0.1*eye(length(x0)); % measurement noise covariance (note: Thrun, et al. calls this Q!)
+%         Q = 0.1*eye(length(x0)); % process noise covariance (note: Thrun, et al. calls this R!)
+%         R = 0.1*eye(length(x0)); % measurement noise covariance (note: Thrun, et al. calls this Q!)
+        Q = zeros(length(x0)); %diag([]); % process noise covariance (note: Thrun, et al. calls this R!)
+        R = diag([0.05 0.1 0.05 0.1 0.05 0.1]); % measurement noise covariance (note: Thrun, et al. calls this Q!)
+        
     case ESTIMATOR_EIF
         M_prev = eye(length(x_prev)); % Omega; Information matrix
-        xi_prev = M_prev*x_prev;   % xi; information vector
+        xi_prev = M_prev*x_prev;      % xi; information vector
         Q = 0*eye(length(x0));
         R = 0.01*eye(length(x0));
 end
@@ -107,7 +110,7 @@ for revealLevel = 0:0.01:maxHorizonLevel
                         figure(1);
                         subplot(4,1,1:3);
                         hold off;
-                        plotRevealModel2d( x, xt, revealLevel);
+                        plotRevealModel2d( x, xt, inv(M), revealLevel);
                         hold on; grid on;
                         plot(z_i(1),z_i(2),'go','MarkerSize',20,'LineWidth',2);
                         plot(z_hat_i(1),z_hat_i(2),'g*','MarkerSize',20,'LineWidth',2);
@@ -186,9 +189,7 @@ for revealLevel = 0:0.01:maxHorizonLevel
                     delta_z(yIdx) = revealLevel-z_hat_full(yIdx)
                     x_synth = x + inv(H)*delta_z
                     x = x_synth
-                    forceObs = 1;
                 end
-                
                 if((z_i(2) <= revealLevel))
                     
                     % CORRECTION STEP
@@ -203,6 +204,7 @@ for revealLevel = 0:0.01:maxHorizonLevel
             
             % increment to next timestep
             x_prev = x;
+            P = 1.1*P;  % inflate P to reduce overconfidence
             P_prev = P;
             
         otherwise
@@ -213,7 +215,7 @@ for revealLevel = 0:0.01:maxHorizonLevel
     
     
     % display current estimate and true state
-    plotRevealModel2d( x, xt, revealLevel);
+    plotRevealModel2d( x, xt, P, revealLevel);
     
     % compute and store RMSE to quantify representation error
     rmse = computeReveal2dError(x,xt);
@@ -272,7 +274,7 @@ z = [x0,y0,x1,y1,x2,y2]';
 end
 
 % display estimated and true models along with current level of occlusion
-function plotRevealModel2d( estParams, trueParams, horizonLevel )
+function plotRevealModel2d( estParams, trueParams, P, horizonLevel )
 
 % plotting settings, etc.
 colors = [0 0 1;1 0 0];
@@ -309,15 +311,24 @@ end
 % add occluded region
 ploth(end+1) = patch([0 1 1 0], [horizonLevel horizonLevel 1.4 1.4],'k','FaceAlpha',0.2,'EdgeColor','none');
 
+% plot unceovrtainty ellipse for point 0
+xycov = P(1:2,1:2);
+[V,D] = eig(xycov);
+d = diag(D);
+for dirIdx = 1:2
+    plot(estParams(1)+[0,d(dirIdx)*V(1,dirIdx)],estParams(2)+[0,d(dirIdx)*V(2,dirIdx)],'m-');
+end
+
 % add legend and scale axes
 legh = legend(ploth,{'Truth','Estimate','Occlusion'},'Location','northoutside','Orientation','horizontal','FontWeight','bold');
 ylim([0 1.2]);
-axis equal;
+% axis equal;
 xlim([0 1]);
 axh = gca;
 axh.XAxis.Visible = 'off';
 axh.YAxis.Visible = 'off';
 legh.Position = legh.Position + [0.08 0.04 0 0];
+drawnow;
 
 end
 
