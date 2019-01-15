@@ -12,6 +12,11 @@ ESTIMATOR_EKF = 1;
 ESTIMATOR_EIF = 2;
 estimationScheme = ESTIMATOR_EKF;
 
+% global flag for plot initialization
+global plotCallCount gh_patch gh_truth gh_est gh_rmse revealLevels;
+plotCallCount = 0;
+
+
 % initialize frame count
 frameCount = 0;
 
@@ -34,8 +39,8 @@ P_prev = P0;
 % initialize state and measurement covariances
 switch(estimationScheme)
     case ESTIMATOR_EKF
-%         Q = 0.1*eye(length(x0)); % process noise covariance (note: Thrun, et al. calls this R!)
-%         R = 0.1*eye(length(x0)); % measurement noise covariance (note: Thrun, et al. calls this Q!)
+        %         Q = 0.1*eye(length(x0)); % process noise covariance (note: Thrun, et al. calls this R!)
+        %         R = 0.1*eye(length(x0)); % measurement noise covariance (note: Thrun, et al. calls this Q!)
         Q = zeros(length(x0)); %diag([]); % process noise covariance (note: Thrun, et al. calls this R!)
         R = diag([0.05 0.1 0.05 0.1 0.05 0.1]); % measurement noise covariance (note: Thrun, et al. calls this Q!)
         
@@ -45,11 +50,13 @@ switch(estimationScheme)
         Q = 0*eye(length(x0));
         R = 0.01*eye(length(x0));
 end
+
 % iterate through horizon levels
-for revealLevel = 0:0.01:maxHorizonLevel
-    
+revealLevels = 0:0.01:maxHorizonLevel;
+for revealLevel = revealLevels
     
     switch(estimationScheme)
+        %%
         case ESTIMATOR_EIF
             
             % PREDICT STEP
@@ -103,7 +110,7 @@ for revealLevel = 0:0.01:maxHorizonLevel
                 
                 % perform update if true feature is visible
                 if((z_i(2) <= revealLevel))
-                   
+                    
                     
                     % illustrate observation
                     if(doIllustrateObs)
@@ -138,7 +145,6 @@ for revealLevel = 0:0.01:maxHorizonLevel
             x_prev = x;
             M_prev = M;
             xi_prev = xi;
-            
             
         case ESTIMATOR_EKF
             
@@ -181,7 +187,7 @@ for revealLevel = 0:0.01:maxHorizonLevel
                 z_hat_i = [z_hat_full(xIdx) z_hat_full(yIdx)]';
                 H_i = H([xIdx yIdx],:);
                 R_i = R([xIdx yIdx],[xIdx yIdx]);
-                          
+                
                 % push model along y axis to horizon if point not observed
                 if( (z_hat_i(2) <= revealLevel) && (z_i(2) > revealLevel) && doProjectUnobservedEstimatesToHorizon)
                     
@@ -211,32 +217,9 @@ for revealLevel = 0:0.01:maxHorizonLevel
             disp('Invalid assimilation algorithm choice.');
     end
     
-    
-    
-    
     % display current estimate and true state
     plotRevealModel2d( x, xt, P, revealLevel);
-    
-    % compute and store RMSE to quantify representation error
-    rmse = computeReveal2dError(x,xt);
-    estError(end+1,:) = [revealLevel rmse];
-    
-    % display RMSE
-    figure(1);
-    subplot(4,1,4);
-    plot(estError(:,1),estError(:,2),'b-','LineWidth',1.6);
-    xlabel('\bfHorizon Level');
-    ylabel('\bfRMSE');
-    xlim([0 maxHorizonLevel]);
-    ylim([0 0.65]);
-    grid on;
-    
-    
-    % update plot
-%     drawnow;
-    
-    
-    
+   
     % save frames for animation
     % then convert - not in MATLAB although could use system() command - using a codec compatible with LaTeX (Beamer)
     % see: https://tex.stackexchange.com/questions/141622/trouble-using-ffmpeg-to-encode-a-h264-video-in-a-mp4-container-to-use-with-medi
@@ -247,14 +230,14 @@ for revealLevel = 0:0.01:maxHorizonLevel
         frameCount = frameCount + 1;
     end
     
-    % show covariance or information matrix
-    figure(2);
-    switch estimationScheme
-        case ESTIMATOR_EKF
-            image(P);
-        case ESTIMATOR_EIF
-            image(M);
-    end
+    %     % show covariance or information matrix
+    %     figure(2);
+    %     switch estimationScheme
+    %         case ESTIMATOR_EKF
+    %             image(P);
+    %         case ESTIMATOR_EIF
+    %             image(M);
+    %     end
     
 end
 
@@ -274,61 +257,75 @@ z = [x0,y0,x1,y1,x2,y2]';
 end
 
 % display estimated and true models along with current level of occlusion
-function plotRevealModel2d( estParams, trueParams, P, horizonLevel )
+function plotRevealModel2d( estParams, trueParams, P, horizonLevel)
 
-% plotting settings, etc.
-colors = [0 0 1;1 0 0];
-modelParams = {trueParams,estParams};
-lineStyles = {'.-','.:'};
-markerSizes = [75,60];
-ploth = [];  % storage for plot handles
+global plotCallCount gh_patch gh_truth gh_est gh_rmse revealLevels;
 
-% switch to animation figure and turn hold off
+% compute observations and RMSE
+z_truth = simpleRevealObsModel2d(trueParams);
+z_est = simpleRevealObsModel2d(estParams);
+rmse = computeReveal2dError(estParams, trueParams);
+
+% activate animation figure
 figure(1);
-set(gcf,'Position',[1.034000e+02 2.274000e+02 0356 0540]);
-subplot(4,1,1:3);
-hold off;
 
-% plot estimated and true models
-for modelIdx = 1:length(modelParams)
+if(~plotCallCount)
     
-    % get color settings and model parameters
-    thisColor = colors(modelIdx,:);
-    thisModel = modelParams{modelIdx};
-    
-    % convert model parameters to x,y locations of each point
-    z = simpleRevealObsModel2d(thisModel);
-    
-    % plot a dummy point for correctly-scaled legend entry
-    ploth(end+1) = plot(NaN,NaN,'.-','MarkerSize',25,'LineWidth',2,'Color',thisColor);
+    % configure plot
+    set(gcf,'Position',[1.034000e+02 2.274000e+02 0356 0540]);
+    subplot(4,1,1:3);
     hold on; grid on;
     
-    % plot model
-    plot(z([5 1 3]) ,z([6 2 4]),lineStyles{modelIdx},'MarkerSize',markerSizes(modelIdx),'LineWidth',2,'Color',thisColor);
+    % plot lines and occlusion patch
+    gh_truth = line(z_truth([5 1 3]),z_truth([6 2 4]),'Marker','.','MarkerSize',75,'LineStyle','-','Color',[0 0 1],'LineWidth',2.0);
+    gh_est = line(z_est([5 1 3]),z_est([6 2 4]),'Marker','.','MarkerSize',60,'LineStyle',':','Color',[1 0 0],'LineWidth',2.0);
+    gh_patch = patch([0 1 1 0], [horizonLevel horizonLevel 1.4 1.4],'k','FaceAlpha',0.2,'EdgeColor','none');
     
+    % more plot configuraiton
+    legh = legend([gh_truth gh_est gh_patch],{'Truth','Estimate','Occlusion'},'Location','northoutside','Orientation','horizontal','FontWeight','bold');
+    %legh.Position = legh.Position + [0.08 0.04 0 0];
+    ylim([0 1.2]);
+    % axis equal;
+    xlim([0 1]);
+    axh = gca;
+    axh.XAxis.Visible = 'off';
+    axh.YAxis.Visible = 'off';
+      
+    % display RMSE
+    rmsePlotVals = [revealLevels' nan(length(revealLevels),1)];
+    rmsePlotVals(1,2) = rmse;
+    subplot(4,1,4);
+    gh_rmse = plot(rmsePlotVals(:,1),rmsePlotVals(:,2),'b-','LineWidth',1.6);
+    xlabel('\bfHorizon Level');
+    ylabel('\bfRMSE');
+    xlim([0 max(revealLevels)]);
+    ylim([0 0.65]);
+    grid on;
+else
+    % efficiently update animation plot on subsequent calls to plotRevealModel2d
+    gh_truth.XData = z_truth([5 1 3]);
+    gh_truth.YData = z_truth([6 3 4]);
+    gh_est.XData = z_est([5 1 3]);
+    gh_est.YData = z_est([6 3 4]);
+    gh_patch.Vertices(1,2) = horizonLevel;
+    gh_patch.Vertices(2,2) = horizonLevel;
+    gh_rmse.YData(plotCallCount+1) = rmse;
 end
 
-% add occluded region
-ploth(end+1) = patch([0 1 1 0], [horizonLevel horizonLevel 1.4 1.4],'k','FaceAlpha',0.2,'EdgeColor','none');
 
-% plot unceovrtainty ellipse for point 0
-xycov = P(1:2,1:2);
-[V,D] = eig(xycov);
-d = diag(D);
-for dirIdx = 1:2
-    plot(estParams(1)+[0,d(dirIdx)*V(1,dirIdx)],estParams(2)+[0,d(dirIdx)*V(2,dirIdx)],'m-');
-end
+% % plot unceovrtainty ellipse for point 0
+% xycov = P(1:2,1:2);
+% [V,D] = eig(xycov);
+% d = diag(D);
+% for dirIdx = 1:2
+%     plot(estParams(1)+[0,d(dirIdx)*V(1,dirIdx)],estParams(2)+[0,d(dirIdx)*V(2,dirIdx)],'m-');
+% end
 
-% add legend and scale axes
-legh = legend(ploth,{'Truth','Estimate','Occlusion'},'Location','northoutside','Orientation','horizontal','FontWeight','bold');
-ylim([0 1.2]);
-% axis equal;
-xlim([0 1]);
-axh = gca;
-axh.XAxis.Visible = 'off';
-axh.YAxis.Visible = 'off';
-legh.Position = legh.Position + [0.08 0.04 0 0];
+% ensure that figure updates
 drawnow;
+
+% increment plot call counter (needed for skipping initialization and updating RMSE plot)
+plotCallCount = plotCallCount + 1;
 
 end
 
