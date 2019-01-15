@@ -13,7 +13,7 @@ ESTIMATOR_EIF = 2;
 estimationScheme = ESTIMATOR_EKF;
 
 % global flag for plot initialization
-global plotCallCount gh_patch gh_truth gh_est gh_rmse revealLevels;
+global plotCallCount gh_patch gh_truth gh_est gh_rmse gh_truth_dot gh_est_dot revealLevels;
 plotCallCount = 0;
 
 
@@ -28,10 +28,10 @@ obsCounts = zeros(3,1);
 xt = [ 0.25 0.35 0.45 0.65 -pi/6 pi/2 ]';
 
 % initialize state estimate (x) and covariance matrix (P)
-% x0 = [ 0.35 0.25 0.55 0.55 pi/12 pi/3 ]';
+x0 = [ 0.35 0.25 0.55 0.55 pi/12 pi/3 ]';
 % x0 = [ 0.80 0.45 0.35 0.35 -9*pi/8 3*pi/2 ]';
-x0 = [ 0.80 0.25 0.5 0.25 3*pi/8 pi/4 ]';
-P0 = diag([0.25 0.25 0.25 0.25 pi/8 pi/8]); %1*ones(length(x0));%0.1*eye(length(x0));
+% x0 = [ 0.80 0.25 0.5 0.25 3*pi/8 pi/4 ]';
+P0 = diag([2 2 2 2 pi pi]); %1*ones(length(x0));%0.1*eye(length(x0));
 x_prev = x0;
 P_prev = P0;
 
@@ -42,12 +42,12 @@ switch(estimationScheme)
         %         Q = 0.1*eye(length(x0)); % process noise covariance (note: Thrun, et al. calls this R!)
         %         R = 0.1*eye(length(x0)); % measurement noise covariance (note: Thrun, et al. calls this Q!)
         Q = zeros(length(x0)); %diag([]); % process noise covariance (note: Thrun, et al. calls this R!)
-        R = diag([0.05 0.1 0.05 0.1 0.05 0.1]); % measurement noise covariance (note: Thrun, et al. calls this Q!)
+        R = diag([0.05 0.05 0.05 0.05 0.05 0.05]); % measurement noise covariance (note: Thrun, et al. calls this Q!)
         
     case ESTIMATOR_EIF
         M_prev = eye(length(x_prev)); % Omega; Information matrix
         xi_prev = M_prev*x_prev;      % xi; information vector
-        Q = 0*eye(length(x0));
+        Q = zeros(length(x0));
         R = 0.01*eye(length(x0));
 end
 
@@ -61,11 +61,11 @@ for revealLevel = revealLevels
             
             % PREDICT STEP
             % recover previous state estimate
-            x_prev = inv(M_prev)*xi_prev;
+            x_prev = (M_prev)\xi_prev;
             
             % compute process Jacobian and a priori information matrix
             F = eye(length(x_prev));
-            M = inv(F*inv(M_prev)*F'+Q);
+            M = inv((F/(M_prev))*F'+Q);
             
             % compute a priori state estimate and information vector
             x = x_prev; %f(x) = x ... static system
@@ -125,8 +125,8 @@ for revealLevel = revealLevels
                     end
                     
                     % add to measurement update information matrix and vector
-                    Msum = Msum + H_i'*inv(R_i)*H_i;
-                    xisum = xisum + H_i'*inv(R_i)*(z_i-z_hat_i+H_i*x);
+                    Msum = Msum + (H_i'/(R_i))*H_i;
+                    xisum = xisum + (H_i'/(R_i))*(z_i-z_hat_i+H_i*x);
                     sumIdx = sumIdx + 1;
                 end
             end
@@ -192,9 +192,9 @@ for revealLevel = revealLevels
                 if( (z_hat_i(2) <= revealLevel) && (z_i(2) > revealLevel) && doProjectUnobservedEstimatesToHorizon)
                     
                     delta_z = zeros(size(z_full));
-                    delta_z(yIdx) = revealLevel-z_hat_full(yIdx)
-                    x_synth = x + inv(H)*delta_z
-                    x = x_synth
+                    delta_z(yIdx) = revealLevel-z_hat_full(yIdx);
+                    x_synth = x + H\delta_z;
+                    x = x_synth;
                 end
                 if((z_i(2) <= revealLevel))
                     
@@ -210,7 +210,7 @@ for revealLevel = revealLevels
             
             % increment to next timestep
             x_prev = x;
-            P = 1.1*P;  % inflate P to reduce overconfidence
+            P = 1.3*P;  % inflate P to reduce overconfidence
             P_prev = P;
             
         otherwise
@@ -230,14 +230,14 @@ for revealLevel = revealLevels
         frameCount = frameCount + 1;
     end
     
-    %     % show covariance or information matrix
-    %     figure(2);
-    %     switch estimationScheme
-    %         case ESTIMATOR_EKF
-    %             image(P);
-    %         case ESTIMATOR_EIF
-    %             image(M);
-    %     end
+        % show covariance or information matrix
+        figure(2);
+        switch estimationScheme
+            case ESTIMATOR_EKF
+                image(P);
+            case ESTIMATOR_EIF
+                image(M);
+        end
     
 end
 
@@ -259,7 +259,7 @@ end
 % display estimated and true models along with current level of occlusion
 function plotRevealModel2d( estParams, trueParams, P, horizonLevel)
 
-global plotCallCount gh_patch gh_truth gh_est gh_rmse revealLevels;
+global plotCallCount gh_patch gh_truth gh_est gh_rmse gh_truth_dot gh_est_dot revealLevels;
 
 % compute observations and RMSE
 z_truth = simpleRevealObsModel2d(trueParams);
@@ -278,7 +278,9 @@ if(~plotCallCount)
     
     % plot lines and occlusion patch
     gh_truth = line(z_truth([5 1 3]),z_truth([6 2 4]),'Marker','.','MarkerSize',75,'LineStyle','-','Color',[0 0 1],'LineWidth',2.0);
+    gh_truth_dot = line(z_truth(5),z_truth(6),'Marker','.','MarkerSize',25,'Color',[1 1 1]);
     gh_est = line(z_est([5 1 3]),z_est([6 2 4]),'Marker','.','MarkerSize',60,'LineStyle',':','Color',[1 0 0],'LineWidth',2.0);
+    gh_est_dot = line(z_est(5),z_est(6),'Marker','.','MarkerSize',25,'Color',[1 1 1]);
     gh_patch = patch([0 1 1 0], [horizonLevel horizonLevel 1.4 1.4],'k','FaceAlpha',0.2,'EdgeColor','none');
     
     % more plot configuraiton
@@ -305,15 +307,19 @@ else
     % efficiently update animation plot on subsequent calls to plotRevealModel2d
     gh_truth.XData = z_truth([5 1 3]);
     gh_truth.YData = z_truth([6 3 4]);
+    gh_truth_dot.XData = z_truth(5);
+    gh_truth_dot.YData = z_truth(6);
     gh_est.XData = z_est([5 1 3]);
     gh_est.YData = z_est([6 3 4]);
+    gh_est_dot.XData = z_est(5);
+    gh_est_dot.YData = z_est(6);
     gh_patch.Vertices(1,2) = horizonLevel;
     gh_patch.Vertices(2,2) = horizonLevel;
     gh_rmse.YData(plotCallCount+1) = rmse;
 end
 
 
-% % plot unceovrtainty ellipse for point 0
+% % plot uncertainty ellipse for point 0
 % xycov = P(1:2,1:2);
 % [V,D] = eig(xycov);
 % d = diag(D);
