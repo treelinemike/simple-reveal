@@ -28,9 +28,9 @@ obsCounts = zeros(3,1);
 xt = [ 0.25 0.35 0.45 0.65 -pi/6 pi/2 ]';
 
 % initialize state estimate (x) and covariance matrix (P)
-x0 = [ 0.35 0.25 0.55 0.55 pi/12 pi/3 ]';
+% x0 = [ 0.35 0.25 0.55 0.55 pi/12 pi/3 ]';
 % x0 = [ 0.80 0.45 0.35 0.35 -9*pi/8 3*pi/2 ]';
-% x0 = [ 0.80 0.25 0.5 0.25 3*pi/8 pi/4 ]';
+x0 = [ 0.80 0.25 0.5 0.25 3*pi/8 pi/4 ]';
 P0 = diag([2 2 2 2 pi pi]); %1*ones(length(x0));%0.1*eye(length(x0));
 x_prev = x0;
 P_prev = P0;
@@ -42,7 +42,7 @@ switch(estimationScheme)
         %         Q = 0.1*eye(length(x0)); % process noise covariance (note: Thrun, et al. calls this R!)
         %         R = 0.1*eye(length(x0)); % measurement noise covariance (note: Thrun, et al. calls this Q!)
         Q = zeros(length(x0)); %diag([]); % process noise covariance (note: Thrun, et al. calls this R!)
-        R = diag([0.05 0.05 0.05 0.05 0.05 0.05]); % measurement noise covariance (note: Thrun, et al. calls this Q!)
+        R = diag([0.5 0.5 0.5 0.5 0.5 0.5]); % measurement noise covariance (note: Thrun, et al. calls this Q!)
         
     case ESTIMATOR_EIF
         M_prev = eye(length(x_prev)); % Omega; Information matrix
@@ -56,7 +56,6 @@ revealLevels = 0:0.01:maxHorizonLevel;
 for revealLevel = revealLevels
     
     switch(estimationScheme)
-        %%
         case ESTIMATOR_EIF
             
             % PREDICT STEP
@@ -190,27 +189,27 @@ for revealLevel = revealLevels
                 
                 % push model along y axis to horizon if point not observed
                 if( (z_hat_i(2) <= revealLevel) && (z_i(2) > revealLevel) && doProjectUnobservedEstimatesToHorizon)
-                    
+                    disp('push update');
                     delta_z = zeros(size(z_full));
-                    delta_z(yIdx) = revealLevel-z_hat_full(yIdx);
+                    delta_z(yIdx) = revealRLevel-z_hat_full(yIdx);
                     x_synth = x + H\delta_z;
                     x = x_synth;
                 end
                 if((z_i(2) <= revealLevel))
-                    
+                    disp('normal update');
                     % CORRECTION STEP
                     % update state and error covariance
-                    K = P*H_i'*inv(H_i*P*H_i'+R_i);
+                    K = P*H_i'/(H_i*P*H_i'+R_i);
                     innov = (z_i - z_hat_i);
                     x = x + K*innov;
                     P = (eye(size(K,1))-K*H_i)*P;
-                    
                 end
             end
             
             % increment to next timestep
+            disp('increment');
             x_prev = x;
-            P = 1.3*P;  % inflate P to reduce overconfidence
+            P = 1.1*P;  % inflate P to reduce overconfidence
             P_prev = P;
             
         otherwise
@@ -219,7 +218,7 @@ for revealLevel = revealLevels
     
     % display current estimate and true state
     plotRevealModel2d( x, xt, P, revealLevel);
-   
+    
     % save frames for animation
     % then convert - not in MATLAB although could use system() command - using a codec compatible with LaTeX (Beamer)
     % see: https://tex.stackexchange.com/questions/141622/trouble-using-ffmpeg-to-encode-a-h264-video-in-a-mp4-container-to-use-with-medi
@@ -230,14 +229,16 @@ for revealLevel = revealLevels
         frameCount = frameCount + 1;
     end
     
-        % show covariance or information matrix
-        figure(2);
-        switch estimationScheme
-            case ESTIMATOR_EKF
-                image(P);
-            case ESTIMATOR_EIF
-                image(M);
-        end
+    % show covariance or information matrix
+    figure(2);
+    switch estimationScheme
+        case ESTIMATOR_EKF
+            image(P);
+        case ESTIMATOR_EIF
+            image(M);
+    end
+   
+%     pause(2)
     
 end
 
@@ -292,7 +293,7 @@ if(~plotCallCount)
     axh = gca;
     axh.XAxis.Visible = 'off';
     axh.YAxis.Visible = 'off';
-      
+    
     % display RMSE
     rmsePlotVals = [revealLevels' nan(length(revealLevels),1)];
     rmsePlotVals(1,2) = rmse;
@@ -306,11 +307,11 @@ if(~plotCallCount)
 else
     % efficiently update animation plot on subsequent calls to plotRevealModel2d
     gh_truth.XData = z_truth([5 1 3]);
-    gh_truth.YData = z_truth([6 3 4]);
+    gh_truth.YData = z_truth([6 2 4]);
     gh_truth_dot.XData = z_truth(5);
     gh_truth_dot.YData = z_truth(6);
     gh_est.XData = z_est([5 1 3]);
-    gh_est.YData = z_est([6 3 4]);
+    gh_est.YData = z_est([6 2 4]);
     gh_est_dot.XData = z_est(5);
     gh_est_dot.YData = z_est(6);
     gh_patch.Vertices(1,2) = horizonLevel;
