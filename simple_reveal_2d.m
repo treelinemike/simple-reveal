@@ -28,9 +28,9 @@ obsCounts = zeros(3,1);
 xt = [ 0.25 0.35 0.45 0.65 -pi/6 pi/2 ]';
 
 % initialize state estimate (x) and covariance matrix (P)
-% x0 = [ 0.35 0.25 0.55 0.55 pi/12 pi/3 ]';
+x0 = [ 0.35 0.25 0.55 0.55 pi/12 pi/3 ]';
 % x0 = [ 0.80 0.45 0.35 0.35 -9*pi/8 3*pi/2 ]';
-x0 = [ 0.80 0.25 0.5 0.25 3*pi/8 pi/4 ]';
+% x0 = [ 0.80 0.25 0.5 0.25 3*pi/8 pi/4 ]';
 P0 = diag([2 2 2 2 pi pi]); %1*ones(length(x0));%0.1*eye(length(x0));
 x_prev = x0;
 P_prev = P0;
@@ -209,7 +209,7 @@ for revealLevel = revealLevels
             % increment to next timestep
             disp('increment');
             x_prev = x;
-            P = 1.1*P;  % inflate P to reduce overconfidence
+            P = 1.04*P;  % inflate P to reduce overconfidence
             P_prev = P;
             
         otherwise
@@ -276,7 +276,6 @@ if(~plotCallCount)
     set(gcf,'Position',[1.034000e+02 2.274000e+02 0356 0540]);
     subplot(4,1,1:3);
     hold on; grid on;
-    
     % plot lines and occlusion patch
     gh_truth = line(z_truth([5 1 3]),z_truth([6 2 4]),'Marker','.','MarkerSize',75,'LineStyle','-','Color',[0 0 1],'LineWidth',2.0);
     gh_truth_dot = line(z_truth(5),z_truth(6),'Marker','.','MarkerSize',25,'Color',[1 1 1]);
@@ -286,13 +285,16 @@ if(~plotCallCount)
     
     % more plot configuraiton
     legh = legend([gh_truth gh_est gh_patch],{'Truth','Estimate','Occlusion'},'Location','northoutside','Orientation','horizontal','FontWeight','bold');
-    %legh.Position = legh.Position + [0.08 0.04 0 0];
+    legh.Position = legh.Position + [.015 -0.015 0 0.03];
     ylim([0 1.2]);
     % axis equal;
     xlim([0 1]);
     axh = gca;
     axh.XAxis.Visible = 'off';
     axh.YAxis.Visible = 'off';
+    axh1 = gca;
+    axh1.GridColor = 0.4*ones(1,3);
+    axh1.GridAlpha = 0.7;
     
     % display RMSE
     rmsePlotVals = [revealLevels' nan(length(revealLevels),1)];
