@@ -13,28 +13,37 @@ M = 10000; % number of particles
 xt = [ 0.25 0.35 0.45 0.65 -pi/6 pi/2 ]';
 
 % initialize state estimate (x) and covariance matrix (P)
-x0 = [ 0.35 0.25 0.55 0.55 pi/12 pi/3 ]';
+% x0 = [ 0.35 0.25 0.55 0.55 pi/12 pi/3 ]';
+x0 = xt + [0.02 -0.03 -0.05 -0.07 2*pi/180 -4*pi/180]';
 % x0 = [ 0.80 0.45 0.35 0.35 -9*pi/8 3*pi/2 ]';
 % x0 = [ 0.80 0.25 0.5 0.25 3*pi/8 pi/4 ]';
-P0 = diag([2 2 2 2 pi pi]); %1*ones(length(x0));%0.1*eye(length(x0));
-P0 = diag([0.5 0.5 0.5 0.5 15*pi/180 15*pi/180]); %1*ones(length(x0));%0.1*eye(length(x0));
+% P0 = diag([2 2 2 2 pi pi]); %1*ones(length(x0));%0.1*eye(length(x0));
+% P0 = diag([0.5 0.5 0.5 0.5 15*pi/180 15*pi/180]); %1*ones(length(x0));%0.1*eye(length(x0));
+P0 = diag([0.2 0.2 0.2 0.2 4*pi/180 4*pi/180]);
 x = x0;
-% P = P0;
-R = diag([0.05 0.05 0.05 0.05 0.05 0.05]); % measurement noise covariance (note: Thrun, et al. calls this Q!)
 
-P = eye(6);
-% R = eye(6);
+P = P0;
+% R = diag([0.05 0.05 0.05 0.05 0.05 0.05]); % measurement noise covariance (note: Thrun, et al. calls this Q!)
+
+% P = eye(6);
+R = 0.05*eye(6);
 
 X = mvnrnd(x,P,M)';
 % ksdensity(X(1,:)); % show marginal PDFs
 
 
-revealLevel = 0.2;  % ideally we'd iterate this
+revealLevel = 0.95;  % ideally we'd iterate this, but we'll keep it static for this test
+
+plotRevealModel2d( x, xt, P, revealLevel);
+
+% wait
+pause(0.5);
 
 
 for i = 1:20
     q = zeros(M,1);
     q2 = q;
+    
     for m = 1:M
         
         % get the appropriate particle
@@ -63,27 +72,31 @@ for i = 1:20
     
     % Do we really need to use the coefficient of the exponential? Probably
     % not...
-    % q2 = q2/sum(q2);
+    q2 = q2/sum(q2);
+    
     % max(abs(q - q2))
-    % figure;
-    % hold on; grid on;
-    % plot(cumsum(q),'r');
-    % plot(cumsum(q2),'b--');
-    
+%     figure;
+%     hold on; grid on;
+%     plot(cumsum(q),'r');
+%     plot(cumsum(q2),'b--');
+%     
     cdf = cumsum(q);
-    
-    x_post_idx = arrayfun(@(x) find(x > cdf,1,'last'), (cdf(1) + (1-cdf(1))*rand(M,1)) );
+
+    x_post_idx = arrayfun(@(afin1) find(afin1 < cdf,1,'first'), rand(M,1)-eps );  % eps subtracted from rand(M,1) to exclude exactly 1.0000... though this is extremely unlikely
+%     x_post_idx = arrayfun(@(x) find(x > cdf,1,'last'), (cdf(1) + (1-cdf(1))*rand(M,1)) );
     X_post = X(:,x_post_idx);
     
     
     % MAP estimate
     x_post = zeros(size(x_prior));
     for xIdx = 1:length(x_post)
-        x_post(xIdx) = max(ksdensity(X_post(xIdx,:)));
+        [pdfY pdfX] = ksdensity(X_post(xIdx,:));
+        [~,mapIdx] = max(pdfY);
+        x_post(xIdx) = pdfX(mapIdx);
     end
     
     % posterior mean
-    % x_post = mean(X_post,2);
+%     x_post = mean(X_post,2);
     
     % display result
     plotRevealModel2d( x_post, xt, P, revealLevel);
