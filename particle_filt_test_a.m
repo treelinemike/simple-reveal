@@ -6,8 +6,9 @@ close all; clear all; clc;
 global plotCallCount gh_patch gh_truth gh_est gh_rmse gh_truth_dot gh_est_dot revealLevels;
 plotCallCount = 0;
 revealLevels = 0:0.01:1;
+doRegularize = 0;
 
-M = 5^6; % number of particles
+M = 4^6; % number of particles
 
 % initialize true state (x_t)
 xt = [ 0.25 0.35 0.45 0.65 -pi/6 pi/2 ]';
@@ -83,84 +84,116 @@ for i = 1:20
     %     plot(cumsum(q),'r');
     %     plot(cumsum(q2),'b--');
     %
-    cdf = cumsum(q);
+    qCDF = cumsum(q);
     
     
-    %    Simon pg 468 step 3d:
-    %    x_post_idx = arrayfun(@(afin1) find(afin1 < cdf,1,'first'), rand(M,1)-eps );  % eps subtracted from rand(M,1) to exclude exactly 1.0000... though this is extremely unlikely
-    
-    %    Simon pg. 473: regularized particle filtering
-    
-    % compute particle ensemble mean and covariance matrix
-    mu = (1/M)*sum(X_prior,2);
-    S = zeros(N);
-    for mIdx = 1:M
-        S = S + (X_prior(:,mIdx)-mu)*(X_prior(:,mIdx)-mu)';
+    if(doRegularize)
+        %    Simon pg. 473: regularized particle filtering
+        
+        % compute particle ensemble mean and covariance matrix
+        mu = mean(X_prior,2); % equivalent to: (1/M)*sum(X_prior,2);
+        S = zeros(N);
+        for mIdx = 1:M
+            S = S + (X_prior(:,mIdx)-mu)*(X_prior(:,mIdx)-mu)';
+        end
+        S = (1/(M-1))*S;
+        
+        % factor covariance matrix as S = A*A' (Cholesky)... note, need 'lower'
+        % argument in MATLAB
+        A = chol(S,'lower');
+        
+        % compute volume of n-dim unit sphere
+        vn = zeros(1,N);
+        vn(1) = 2;
+        vn(2) = pi;
+        for vnIdx = 3:N
+            vn(vnIdx) = 2*pi*vn(vnIdx-2)/vnIdx;
+        end
+        vn = vn(end);
+        
+        % compute optimal kernel bandwidth
+        h = 0.5*(8*(1/vn)*(N+4)*(2*sqrt(pi))^N)^(1/(N+4))*(M)^(-1/(N+4));
+        
+        % approximate posterior PDF
+        % define state space bounds and sampling density
+        % randomly sample PDF 'near' a priori estimate: A = mu + randn(6,1000).*sqrt(diag(S));  [mu mean(A,2) sqrt(diag(S)) std(A')']
+        % or maybe with a beta? mu = .6; y = betarnd(ones(100,1)*2,ones(100,1)*2*(1-mu)/mu); close all; [ksy,ksx] = ksdensity(y); plot(ksx,ksy); [~,maxIdx] = max(ksy); [mu mean(y) ksx(maxIdx)]
+        % better yet: truncated normal: pd = makedist('normal','mu',0,'sigma',2); pd2 = truncate(pd,-1,1); x = -10:0.01:10; y = pdf(pd,x); close all; plot(x,y,'b');hold on; plot(x,pdf(pd2,x),'r')
+        %
+        numPtsPerDim = 4;  % critical parameter, size of sample point list is numPtsPerDim^N where N is the number of dimensions
+        stdevs = sqrt(diag(S));
+        samplePtsPerDim = zeros(N,numPtsPerDim);
+        bounds = [0 1; 0 1; 0 1; 0 1; -pi pi; -pi pi];
+        for dimIdx = 1:N
+            samplePtsPerDim(dimIdx,:) = ...
+                random( ...
+                truncate( ...
+                makedist('normal','mu',mu(dimIdx),'sigma',stdevs(dimIdx)) ...
+                ,bounds(dimIdx,1),bounds(dimIdx,2)) ...
+                ,[1,numPtsPerDim]);
+        end
+        
+        [X1 X2 X3 X4 X5 X6] = ndgrid(...
+            samplePtsPerDim(1,:), ...
+            samplePtsPerDim(2,:), ...
+            samplePtsPerDim(3,:), ...
+            samplePtsPerDim(4,:), ...
+            samplePtsPerDim(5,:), ...
+            samplePtsPerDim(6,:) );
+        samplePts = [X1(:), X2(:), X3(:) X4(:) X5(:) X6(:)]';         % list of state space locations at which to sample posterior
+        
+        posteriorVals = zeros(size(samplePts,2),1);
+        for sampIdx = 1:size(samplePts,2)
+            xs = samplePts(:,sampIdx);
+            thisPosteriorVal = 0;
+            for particleIdx = 1:M
+                x = A\((xs-X_prior(:,particleIdx))/h);
+                if( norm(x) < 1 )
+                    Kx = ((N+2)/(2*vn))*(1-x'*x);
+                else
+                    Kx = 0;
+                end
+                Khx = (1/det(A))*(1/(h^N))*Kx;
+                thisPosteriorVal = thisPosteriorVal + q(particleIdx)*Khx;
+            end
+            posteriorVals(sampIdx) = thisPosteriorVal;
+        end
+        
+        % normalize posterior values
+        posteriorVals = posteriorVals/sum(posteriorVals);
+        posteriorCDFVals = cumsum(posteriorVals);
+        
+        % estimate the mean of this PDF ...
+        % alternatively we could do this from sampled particle set
+        x_post = sum(samplePts.*repmat(posteriorVals',6,1),2);
+        
+        % sample new particle set
+        x_post_idx = arrayfun(@(afin1) find(posteriorCDFVals > afin1,1,'first'), rand(M,1)-eps );
+        X_post = samplePts(:,x_post_idx);
+        
+    else
+        %    Simon pg 468 step 3d:
+        x_post_idx = arrayfun(@(afin1) find(afin1 < qCDF,1,'first'), rand(M,1)-eps );  % eps subtracted from rand(M,1) to exclude exactly 1.0000... though this is extremely unlikely
+        X_post = X_prior(:,x_post_idx);
+        x_post = sum(X_prior.*repmat(q',6,1),2);
+        
     end
-    S = (1/(M-1))*S;
-    
-    % factor covariance matrix as S = A*A' (Cholesky)... note, need 'lower'
-    % argument in MATLAB
-    A = chol(S,'lower');
-    
-    % compute volume of n-dim unit sphere
-    vn = zeros(1,N);
-    vn(1) = 2;
-    vn(2) = pi;
-    for vnIdx = 3:N
-       vn(vnIdx) = 2*pi*vn(vnIdx-2)/vnIdx; 
-    end
-    vn = vn(end);
-    
-    % compute optimal kernel bandwidth
-    h = 0.5*(8*(1/vn)*(N+4)*(2*sqrt(pi))^N)^(1/(N+4))*(M)^(-1/(N+4));
-    
-    % approximate posterior PDF
-    % define state space bounds and sampling density
-    % randomly sample PDF 'near' a priori estimate: A = mu + randn(6,1000).*sqrt(diag(S));  [mu mean(A,2) sqrt(diag(S)) std(A')']
-    % or maybe with a beta? mu = .6; y = betarnd(ones(100,1)*2,ones(100,1)*2*(1-mu)/mu); close all; [ksy,ksx] = ksdensity(y); plot(ksx,ksy); [~,maxIdx] = max(ksy); [mu mean(y) ksx(maxIdx)]
-    % better yet: truncated normal: pd = makedist('normal','mu',0,'sigma',2); pd2 = truncate(pd,-1,1); x = -10:0.01:10; y = pdf(pd,x); close all; plot(x,y,'b');hold on; plot(x,pdf(pd2,x),'r')
-    %
-    numPtsPerDim = 5;  % critical parameter, size of sample point list is numPtsPerDim^N where N is the number of dimensions
-    stdevs = sqrt(diag(S));
-    samplePtsPerDim = zeros(N,numPtsPerDim);
-    bounds = [0 1; 0 1; 0 1; 0 1; 0 2*pi; 0 2*pi];
-    for dimIdx = 1:N
-        samplePtsPerDim(dimIdx,:) = ...
-            random( ... 
-            truncate( ... 
-            makedist('normal','mu',mu(dimIdx),'sigma',stdevs(dimIdx)) ...
-            ,bounds(dimIdx,1),bounds(dimIdx,2)) ...
-            ,[1,numPtsPerDim]);
-    end
-    
-    [X1 X2 X3 X4 X5 X6] = ndgrid(...
-        samplePtsPerDim(1,:), ...
-        samplePtsPerDim(2,:), ...
-        samplePtsPerDim(3,:), ...
-        samplePtsPerDim(4,:), ...
-        samplePtsPerDim(5,:), ...
-        samplePtsPerDim(6,:) );
-    samplePts = [X1(:), X2(:), X3(:) X4(:) X5(:) X6(:)]';         % list of state space locations at which to sample posterior
-    
-    
-    
-    X_post = X(:,x_post_idx);
-    
-    
-    % MAP estimate
-    x_post = zeros(size(x_prior));
-    for xIdx = 1:length(x_post)
-        [pdfY pdfX] = ksdensity(X_post(xIdx,:));
-        [~,mapIdx] = max(pdfY);
-        x_post(xIdx) = pdfX(mapIdx);
-    end
-    
-    % posterior mean
-    %     x_post = mean(X_post,2);
+    % % % %     % MAP estimate -- probably wrong! should NOT do this on marginal
+    % % % %     % distributions, right? Better to find maximum value of PDF over entire
+    % % % %     % state space?
+    % % % %     x_post = zeros(size(x_prior));
+    % % % %     for xIdx = 1:length(x_post)
+    % % % %         [pdfY pdfX] = ksdensity(X_post(xIdx,:));
+    % % % %         [~,mapIdx] = max(pdfY);
+    % % % %         x_post(xIdx) = pdfX(mapIdx);
+    % % % %     end
+    % % %
+    % % %     % posterior mean
+    % % %     %     x_post = mean(X_post,2);
     
     % display result
     plotRevealModel2d( x_post, xt, P, revealLevel);
+    
     
     % wait
     pause(0.1);
