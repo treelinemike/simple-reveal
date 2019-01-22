@@ -2,207 +2,163 @@
 
 % restart
 close all; clear all; clc;
+
 % global flag for plot initialization
 global plotCallCount gh_patch gh_truth gh_est gh_rmse gh_truth_dot gh_est_dot revealLevels;
 plotCallCount = 0;
 revealLevels = 0:0.01:1;
-doRegularize = 0;
-
-M = 4^6; % number of particles
+maxHorizonLevel = 1.0;
 
 % initialize true state (x_t)
 xt = [ 0.25 0.35 0.45 0.65 -pi/6 pi/2 ]';
-
 N = length(xt);  % number of states
 
-% initialize state estimate (x) and covariance matrix (P)
+% initialize state estimate (x)
 % x0 = [ 0.35 0.25 0.55 0.55 pi/12 pi/3 ]';
-x0 = xt + [0.02 -0.03 -0.05 -0.07 2*pi/180 -4*pi/180]';
 % x0 = [ 0.80 0.45 0.35 0.35 -9*pi/8 3*pi/2 ]';
-% x0 = [ 0.80 0.25 0.5 0.25 3*pi/8 pi/4 ]';
-% P0 = diag([2 2 2 2 pi pi]); %1*ones(length(x0));%0.1*eye(length(x0));
-% P0 = diag([0.5 0.5 0.5 0.5 15*pi/180 15*pi/180]); %1*ones(length(x0));%0.1*eye(length(x0));
-P0 = diag([0.2 0.2 0.2 0.2 4*pi/180 4*pi/180]);
-x = x0;
+x0 = [ 0.80 0.25 0.5 0.25 3*pi/8 pi/4 ]';
+x_prev = x0;
 
-P = P0;
-% R = diag([0.05 0.05 0.05 0.05 0.05 0.05]); % measurement noise covariance (note: Thrun, et al. calls this Q!)
+% initialize state error covariance matrix (P)
+P0 = diag([0.2 0.2 0.2 0.2 2*pi/180 2*pi/180]);
+P_prev = P0;
 
-% P = eye(6);
-R = 0.05*eye(6);
+% set measurement noise covariance (note: Thrun, et al. calls this Q!)
+R = diag([0.05 0.05 0.05 0.05 0.05 0.05]);
 
-X = mvnrnd(x,P,M)';
-% ksdensity(X(1,:)); % show marginal PDFs
+% storage for estimator error covariance
+P_hist = [];
 
+% set seed for random number generator
+% to get repeatable output (for publication, etc.)
+rng(17);
 
-revealLevel = 0.95;  % ideally we'd iterate this, but we'll keep it static for this test
+% number of particles
+M = 5^6;
 
-plotRevealModel2d( x, xt, P, revealLevel);
+% generate an initial set of particles using Gaussian
+% approximation/assumption
+X = mvnrnd(x_prev,P_prev,M)';
 
-% wait
-pause(0.5);
-
-
-for i = 1:20
+% run repeated observations & display initial state
+revealLevels = 0:0.01:maxHorizonLevel;
+plotRevealModel2d( x_prev, xt, P_prev, revealLevels(1));
+for revealLevel = revealLevels
+    % initialize all weights and a priori particles to zero
     q = zeros(M,1);
-    q2 = q;
     X_prior = zeros(N,M);
-    for m = 1:M
-        
-        % get the appropriate particle
-        x_prev = X(:,m);
-        
-        % compute proposal (prediction) for this particle
-        x_prior = x_prev;  % identity transformation
-        X_prior(:,m) = x_prior;
-        
-        % get a measurement
-        z = simpleRevealObsModel2d( xt );
-        z_hat = simpleRevealObsModel2d( x_prior );
-        innov = z-z_hat;
-        
-        % remove unobserved rows from innovation and R matrix
-        obs_mask = repelem(z(2:2:end,:) < revealLevel,2);
-        innov = innov(obs_mask);
-        Rt = R(obs_mask,obs_mask);
-        
-        % compute importance factor
-        c1 = (1/( (2*pi)^(size(innov,1)/2) * sqrt(det(Rt)) ));
-        q(m) = c1 * exp( -0.5 * innov' * inv(Rt) * innov);
-        q2(m) = exp( -0.5 * innov' * inv(Rt) * innov);
-        
-    end
-    q = q/sum(q);
-    
-    % Do we really need to use the coefficient of the exponential? Probably
-    % not...
-    q2 = q2/sum(q2);
-    
-    % max(abs(q - q2))
-    %     figure;
-    %     hold on; grid on;
-    %     plot(cumsum(q),'r');
-    %     plot(cumsum(q2),'b--');
-    %
-    qCDF = cumsum(q);
     
     
-    if(doRegularize)
-        %    Simon pg. 473: regularized particle filtering
+    % plot current particle set (2D, just location of elbow particle)
+    figure(3);
+    hold off;
+    plot(X(1,:),X(2,:),'b.','MarkerSize',20);
+    xlim([0 2]);
+    ylim([0 2]);
+    hold on;
+    plot(xt(1),xt(2),'ro','MarkerSize',10,'LineWidth',2);
+    plot(x0(1),x0(2),'k.','MarkerSize',20,'LineWidth',2);
+    
+    
+    % get a measurement
+    z = simpleRevealObsModel2d( xt );
+    obs_mask = repelem(z(2:2:end,:) < revealLevel,2);
+    Rt = R(obs_mask,obs_mask);
+    if(~isempty(Rt))
+        
+        % loop through particles computing weights based on how well data fits
+        % model
+        for m = 1:M
+            
+            % get the appropriate particle
+            x_prev = X(:,m);
+            
+            % compute proposal (prediction) for this particle
+            x_prior = x_prev;  % identity transformation
+            X_prior(:,m) = x_prior;
+            
+            % remove unobserved rows from innovation and R matrix
+            z_hat = simpleRevealObsModel2d( x_prior );
+            innov = z-z_hat;
+            innov = innov(obs_mask);
+            
+            
+            % compute importance factor
+            % don't need constant coefficient b/c normalizing to sum to one
+            % later...
+            q(m) = exp( -0.5 * innov' * inv(Rt) * innov);  % the q vector incorporates MEASUREMENT data
+            
+        end
+        
+        % normalize weights
+        q = q/sum(q);
+        qCDF = cumsum(q);
+        
+        
+        
+        % starting point: Simon pg. 473: regularized particle filtering
+        % sample particle based on their weights
+        x_post_idx = arrayfun(@(afin1) find(afin1 < qCDF,1,'first'), rand(M,1)-eps );  % eps subtracted from rand(M,1) to exclude exactly 1.0000... though this is extremely unlikely
+        X_post_prereg = X_prior(:,x_post_idx);
+        
         
         % compute particle ensemble mean and covariance matrix
-        mu = mean(X_prior,2); % equivalent to: (1/M)*sum(X_prior,2);
-        S = zeros(N);
+        % mean
+        mu_prereg = mean(X_post_prereg,2); % equivalent to: (1/M)*sum(X_prior,2);
+        
+        % covariance
+        S_prereg = zeros(N);
         for mIdx = 1:M
-            S = S + (X_prior(:,mIdx)-mu)*(X_prior(:,mIdx)-mu)';
+            S_prereg = S_prereg + (X_post_prereg(:,mIdx)-mu_prereg)*(X_post_prereg(:,mIdx)-mu_prereg)';
         end
-        S = (1/(M-1))*S;
+        S_prereg = (1/(M-1))*S_prereg;
         
-        % factor covariance matrix as S = A*A' (Cholesky)... note, need 'lower'
-        % argument in MATLAB
-        A = chol(S,'lower');
+        % generate new posterior particles using Gaussian approximation to
+        % posterior
+        X_post = mvnrnd(mu_prereg,1.1*S_prereg,M)';
         
-        % compute volume of n-dim unit sphere
-        vn = zeros(1,N);
-        vn(1) = 2;
-        vn(2) = pi;
-        for vnIdx = 3:N
-            vn(vnIdx) = 2*pi*vn(vnIdx-2)/vnIdx;
-        end
-        vn = vn(end);
-        
-        % compute optimal kernel bandwidth
-        h = 0.5*(8*(1/vn)*(N+4)*(2*sqrt(pi))^N)^(1/(N+4))*(M)^(-1/(N+4));
-        
-        % approximate posterior PDF
-        % define state space bounds and sampling density
-        % randomly sample PDF 'near' a priori estimate: A = mu + randn(6,1000).*sqrt(diag(S));  [mu mean(A,2) sqrt(diag(S)) std(A')']
-        % or maybe with a beta? mu = .6; y = betarnd(ones(100,1)*2,ones(100,1)*2*(1-mu)/mu); close all; [ksy,ksx] = ksdensity(y); plot(ksx,ksy); [~,maxIdx] = max(ksy); [mu mean(y) ksx(maxIdx)]
-        % better yet: truncated normal: pd = makedist('normal','mu',0,'sigma',2); pd2 = truncate(pd,-1,1); x = -10:0.01:10; y = pdf(pd,x); close all; plot(x,y,'b');hold on; plot(x,pdf(pd2,x),'r')
-        %
-        numPtsPerDim = 4;  % critical parameter, size of sample point list is numPtsPerDim^N where N is the number of dimensions
-        stdevs = sqrt(diag(S));
-        samplePtsPerDim = zeros(N,numPtsPerDim);
-        bounds = [0 1; 0 1; 0 1; 0 1; -pi pi; -pi pi];
-        for dimIdx = 1:N
-            samplePtsPerDim(dimIdx,:) = ...
-                random( ...
-                truncate( ...
-                makedist('normal','mu',mu(dimIdx),'sigma',stdevs(dimIdx)) ...
-                ,bounds(dimIdx,1),bounds(dimIdx,2)) ...
-                ,[1,numPtsPerDim]);
-        end
-        
-        [X1 X2 X3 X4 X5 X6] = ndgrid(...
-            samplePtsPerDim(1,:), ...
-            samplePtsPerDim(2,:), ...
-            samplePtsPerDim(3,:), ...
-            samplePtsPerDim(4,:), ...
-            samplePtsPerDim(5,:), ...
-            samplePtsPerDim(6,:) );
-        samplePts = [X1(:), X2(:), X3(:) X4(:) X5(:) X6(:)]';         % list of state space locations at which to sample posterior
-        
-        posteriorVals = zeros(size(samplePts,2),1);
-        for sampIdx = 1:size(samplePts,2)
-            xs = samplePts(:,sampIdx);
-            thisPosteriorVal = 0;
-            for particleIdx = 1:M
-                x = A\((xs-X_prior(:,particleIdx))/h);
-                if( norm(x) < 1 )
-                    Kx = ((N+2)/(2*vn))*(1-x'*x);
-                else
-                    Kx = 0;
-                end
-                Khx = (1/det(A))*(1/(h^N))*Kx;
-                thisPosteriorVal = thisPosteriorVal + q(particleIdx)*Khx;
-            end
-            posteriorVals(sampIdx) = thisPosteriorVal;
-        end
-        
-        % normalize posterior values
-        posteriorVals = posteriorVals/sum(posteriorVals);
-        posteriorCDFVals = cumsum(posteriorVals);
-        
-        % estimate the mean of this PDF ...
-        % alternatively we could do this from sampled particle set
-        x_post = sum(samplePts.*repmat(posteriorVals',6,1),2);
-        
-        % sample new particle set
-        x_post_idx = arrayfun(@(afin1) find(posteriorCDFVals > afin1,1,'first'), rand(M,1)-eps );
-        X_post = samplePts(:,x_post_idx);
-        
-    else
-        %    Simon pg 468 step 3d:
-        x_post_idx = arrayfun(@(afin1) find(afin1 < qCDF,1,'first'), rand(M,1)-eps );  % eps subtracted from rand(M,1) to exclude exactly 1.0000... though this is extremely unlikely
-        X_post = X_prior(:,x_post_idx);
-        x_post = sum(X_prior.*repmat(q',6,1),2);
-        
+        % update particle set
+        X = X_post;
     end
-    % % % %     % MAP estimate -- probably wrong! should NOT do this on marginal
-    % % % %     % distributions, right? Better to find maximum value of PDF over entire
-    % % % %     % state space?
-    % % % %     x_post = zeros(size(x_prior));
-    % % % %     for xIdx = 1:length(x_post)
-    % % % %         [pdfY pdfX] = ksdensity(X_post(xIdx,:));
-    % % % %         [~,mapIdx] = max(pdfY);
-    % % % %         x_post(xIdx) = pdfX(mapIdx);
-    % % % %     end
-    % % %
-    % % %     % posterior mean
-    % % %     %     x_post = mean(X_post,2);
+    
+    % mean of posterior particle set
+    mu_post = mean(X,2);
+    
+    % covariance of posterior particle set
+    P_post = zeros(N);
+    for mIdx = 1:M
+        P_post = P_post + (X(:,mIdx)-mu_post)*(X(:,mIdx)-mu_post)';
+    end
+    P_post = (1/(M-1))*P_post;
+    P = P_post;
+    
+    % show new mean
+    figure(3)
+    plot(mu_post(1),mu_post(2),'m*','MarkerSize',20);
     
     % display result
-    plotRevealModel2d( x_post, xt, P, revealLevel);
+    plotRevealModel2d( mu_post, xt, P, revealLevel);
+    drawnow;
+    
+    % store P
+    P_hist(end+1,:) = reshape(P',[],1)';
     
     
-    % wait
-    pause(0.1);
-    
-    % update particle set
-    X = X_post;
 end
-% convert model parameters into (x,y) locations of each point
 
+% display P
+figure;
+set(gcf,'Position',[0069 0065 1.262400e+03 6.696000e+02]);
+for plotIdx = 1:size(P_hist,2)
+    rowNum = ceil(plotIdx/N);
+    colNum = mod(plotIdx-1,N)+1;
+    if( colNum >= rowNum)subplot(size(P,1),size(P,2),plotIdx);
+        plot(P_hist(:,plotIdx),'b-','LineWidth',1.6);
+        hold on; grid on;
+    end
+end
+
+% convert model parameters into (x,y) locations of each point
 function z_hat = simpleRevealObsModel2d( x )
 
 x0 = x(1);
@@ -213,6 +169,7 @@ x2 = x0 + x(4)*cos(x(5)+x(6));
 y2 = y0 + x(4)*sin(x(5)+x(6));
 
 z_hat = [x0,y0,x1,y1,x2,y2]';
+% z_hat = [x0,y0]';
 
 end
 
