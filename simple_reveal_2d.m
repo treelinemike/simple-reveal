@@ -26,7 +26,6 @@ estError = [];
 obsCounts = zeros(3,1);
 P_hist = [];
 
-
 % initialize true state (x_t)
 xt = [ 0.25 0.35 0.45 0.65 -pi/6 pi/2 ]';
 N = length(xt);  % number of states
@@ -52,7 +51,7 @@ switch(estimationScheme)
         % no parameters to set
         
     case ESTIMATOR_EIF
-        M_prev = eye(length(x_prev)); % Omega; Information matrix
+        M_prev = eye(length(x_prev)); % Omega; Information matrix, initialize to identity
         xi_prev = M_prev*x_prev;      % xi; information vector
         
     case ESTIMATOR_PF
