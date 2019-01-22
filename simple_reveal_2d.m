@@ -17,7 +17,6 @@ estimationScheme = ESTIMATOR_PF;
 global plotCallCount gh_patch gh_truth gh_est gh_rmse gh_truth_dot gh_est_dot revealLevels;
 plotCallCount = 0;
 
-
 % initialize frame count
 frameCount = 0;
 
@@ -239,13 +238,42 @@ for revealLevel = revealLevels
             
             % plot current particle set (2D, just location of elbow particle)
             figure(3);
+            set(gcf,'Position',[4.634000e+02 3.418000e+02 1052 4.200000e+02]);
+            subplot(1,3,1);
             hold off;
             plot(X(1,:),X(2,:),'b.','MarkerSize',20);
-            xlim([0 2]);
-            ylim([0 2]);
-            hold on;
+            xlim([-2 2]);
+            ylim([-2 2]);
+            hold on; grid on;
             plot(xt(1),xt(2),'ro','MarkerSize',10,'LineWidth',2);
             plot(x0(1),x0(2),'k.','MarkerSize',20,'LineWidth',2);
+            xlabel('x_0');
+            ylabel('y_0');
+            axis equal;
+
+            subplot(1,3,2);
+            hold off;
+            plot(X(3,:),X(4,:),'b.','MarkerSize',20);
+            xlim([-4 4]);
+            ylim([-4 4]);
+            hold on; grid on;
+            plot(xt(3),xt(4),'ro','MarkerSize',10,'LineWidth',2);
+            plot(x0(3),x0(4),'k.','MarkerSize',20,'LineWidth',2);
+            xlabel('r_1');
+            ylabel('r_2');
+            axis square;
+            
+            subplot(1,3,3);
+            hold off;
+            plot(X(5,:),X(6,:),'b.','MarkerSize',20);
+            xlim(pi*[-2 2]);
+            ylim(pi*[-2 2]);
+            axis equal;
+            hold on; grid on;
+            plot(xt(5),xt(6),'ro','MarkerSize',10,'LineWidth',2);
+            plot(x0(5),x0(6),'k.','MarkerSize',20,'LineWidth',2);
+            xlabel('\Theta_1');
+            ylabel('\Theta_2');            
             
             % get a measurement, subject to horizon/occlusion
             z = simpleRevealObsModel2d( xt );
@@ -323,7 +351,12 @@ for revealLevel = revealLevels
             
             % show new mean on particle scatter projection
             figure(3)
-            plot(mu_post(1),mu_post(2),'m*','MarkerSize',20);
+            subplot(1,3,1);
+            plot(mu_post(1),mu_post(2),'m*','MarkerSize',20,'LineWidth',4);
+            subplot(1,3,2);
+            plot(mu_post(3),mu_post(4),'m*','MarkerSize',20,'LineWidth',4);
+            subplot(1,3,3);
+            plot(mu_post(5),mu_post(6),'m*','MarkerSize',20,'LineWidth',4);
             
         otherwise
             disp('Invalid assimilation algorithm choice.');
