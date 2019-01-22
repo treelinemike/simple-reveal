@@ -29,19 +29,26 @@ P_hist = [];
 xt = [ 0.25 0.35 0.45 0.65 -pi/6 pi/2 ]';
 N = length(xt);  % number of states
 
+% state bounds (for random generation)
+% formatted for using rmvrnd() from Tim Benham on MATLAB Central:
+% https://www.mathworks.com/matlabcentral/fileexchange/34402-truncated-multivariate-normal
+% format [ -x1_lower -x2_lower ... -x6_lower x1_upper x2_upper ... x6_upper]'
+% NOTE: negative signs on lower bounds! if region is -1 to 1, result is [1 1] (both positive!)
+stateBounds = [1 1 0 0 pi pi 1 1 2 2 pi pi]';
+
 % initialize state estimate (x) 
-x0 = [ 0.35 0.25 0.55 0.55 pi/12 pi/3 ]';
+% x0 = [ 0.35 0.25 0.55 0.55 pi/12 pi/3 ]';
 % x0 = [ 0.80 0.45 0.35 0.35 -9*pi/8 3*pi/2 ]';
-% x0 = [ 0.80 0.25 0.5 0.25 3*pi/8 pi/4 ]';
+x0 = [ 0.80 0.25 0.5 0.25 3*pi/8 pi/4 ]';
 x_prev = x0;
 
 % initialize state estimate error covariance matrix (P)
-P0 = diag([0.2 0.2 0.2 0.2 2*pi/180 2*pi/180]);
+P0 = diag([0.2 0.2 0.2 0.2 10*pi/180 10*pi/180]);
 P_prev = P0;
 
 % initialize process and measurment noise covariance matrices
 Q = zeros(length(x0)); %diag([]); % process noise covariance (note: Thrun, et al. calls this R!)
-R = diag([0.5 0.5 0.5 0.5 0.5 0.5]); % measurement noise covariance (note: Thrun, et al. calls this Q!)
+R = diag([0.01 0.01 0.01 0.01 0.01 0.01]); % measurement noise covariance (note: Thrun, et al. calls this Q!)
 
 % initalize information filter variables
 % initialize state and measurement covariances
@@ -63,7 +70,8 @@ switch(estimationScheme)
         
         % generate an initial set of particles using Gaussian
         % approximation/assumption
-        X = mvnrnd(x_prev,P_prev,M)';
+%         X = mvnrnd(x_prev,P_prev,M)';
+        X = rmvnrnd(x_prev,P_prev,M,[-eye(6);eye(6)],stateBounds)';
         
 end
 
@@ -135,11 +143,12 @@ for revealLevel = revealLevels
                 end
             end
             
-            % increment to next timestep
-            disp('increment');
-            x_prev = x;
-            P = 1.04*P;  % inflate P to reduce overconfidence
-            P_prev = P;
+            % inflate P to reduce overconfidence
+            P = 1.04*P;  
+            
+            % we will keep x and P around for now
+            % they will be put into x_prev and P_prev outside of switch()
+            % statement
             
         case ESTIMATOR_EIF
             
@@ -225,10 +234,12 @@ for revealLevel = revealLevels
             
             P = inv(M);
             x = P*xi;
-            P_prev = P;
-            x_prev = x;
             M_prev = M;
             xi_prev = xi;
+            
+            % we will keep x and P around for now
+            % they will be put into x_prev and P_prev outside of switch()
+            % statement
             
         case ESTIMATOR_PF
             
@@ -242,23 +253,25 @@ for revealLevel = revealLevels
             subplot(1,3,1);
             hold off;
             plot(X(1,:),X(2,:),'b.','MarkerSize',20);
-            xlim([-2 2]);
-            ylim([-2 2]);
+            xlim(getWiderBounds(-stateBounds(1),stateBounds(1+6)));
+            ylim(getWiderBounds(-stateBounds(2),stateBounds(2+6)));
             hold on; grid on;
             plot(xt(1),xt(2),'ro','MarkerSize',10,'LineWidth',2);
             plot(x0(1),x0(2),'k.','MarkerSize',20,'LineWidth',2);
+            plot(x_prev(1),x_prev(2),'m+','MarkerSize',10,'LineWidth',2);
             xlabel('x_0');
             ylabel('y_0');
-            axis equal;
+            axis square;
 
             subplot(1,3,2);
             hold off;
             plot(X(3,:),X(4,:),'b.','MarkerSize',20);
-            xlim([-4 4]);
-            ylim([-4 4]);
+            xlim(getWiderBounds(-stateBounds(3),stateBounds(3+6)));
+            ylim(getWiderBounds(-stateBounds(4),stateBounds(4+6)));
             hold on; grid on;
             plot(xt(3),xt(4),'ro','MarkerSize',10,'LineWidth',2);
             plot(x0(3),x0(4),'k.','MarkerSize',20,'LineWidth',2);
+            plot(x_prev(3),x_prev(4),'m+','MarkerSize',10,'LineWidth',2);
             xlabel('r_1');
             ylabel('r_2');
             axis square;
@@ -266,14 +279,15 @@ for revealLevel = revealLevels
             subplot(1,3,3);
             hold off;
             plot(X(5,:),X(6,:),'b.','MarkerSize',20);
-            xlim(pi*[-2 2]);
-            ylim(pi*[-2 2]);
-            axis equal;
+            xlim(getWiderBounds(-stateBounds(5),stateBounds(5+6)));
+            ylim(getWiderBounds(-stateBounds(6),stateBounds(6+6)));
             hold on; grid on;
             plot(xt(5),xt(6),'ro','MarkerSize',10,'LineWidth',2);
             plot(x0(5),x0(6),'k.','MarkerSize',20,'LineWidth',2);
+            plot(x_prev(5),x_prev(6),'m+','MarkerSize',10,'LineWidth',2);
             xlabel('\Theta_1');
-            ylabel('\Theta_2');            
+            ylabel('\Theta_2');     
+            axis square;
             
             % get a measurement, subject to horizon/occlusion
             z = simpleRevealObsModel2d( xt );
@@ -329,7 +343,8 @@ for revealLevel = revealLevels
                 
                 % generate new posterior particles using Gaussian approximation to
                 % posterior
-                X_post = mvnrnd(mu_prereg,1.1*S_prereg,M)';
+%                 X_post = mvnrnd(mu_prereg,1.1*S_prereg,M)';
+                X_post = rmvnrnd(mu_prereg,1.04*S_prereg,M,[-eye(6);eye(6)],stateBounds)';
                 
                 % update with the posteriror particle set
                 X = X_post;   % THIS PREPARES PARTICLE SET FOR NEXT ITERATION
@@ -345,18 +360,9 @@ for revealLevel = revealLevels
             end
             P_post = (1/(M-1))*P_post;
             
-            % update x and P for plotting
+            % update x and P to conform with other estimation schemes
             x = mu_post;
             P = P_post;
-            
-            % show new mean on particle scatter projection
-            figure(3)
-            subplot(1,3,1);
-            plot(mu_post(1),mu_post(2),'m*','MarkerSize',20,'LineWidth',4);
-            subplot(1,3,2);
-            plot(mu_post(3),mu_post(4),'m*','MarkerSize',20,'LineWidth',4);
-            subplot(1,3,3);
-            plot(mu_post(5),mu_post(6),'m*','MarkerSize',20,'LineWidth',4);
             
         otherwise
             disp('Invalid assimilation algorithm choice.');
@@ -379,20 +385,24 @@ for revealLevel = revealLevels
     end
     
     % show covariance or information matrix
-    figure(2);
+    
     switch estimationScheme
         case ESTIMATOR_EKF
+            figure(2);
             image(P);
         case ESTIMATOR_EIF
+            figure(2);
             image(M);
     end
     
-    %     pause(2)
+    % increment timestep
+    x_prev = x;
+    P_prev = P;
     
 end
 
 
-% display P
+% display error covariance trends
 figure;
 set(gcf,'Position',[0069 0065 1.262400e+03 6.696000e+02]);
 for plotIdx = 1:size(P_hist,2)
@@ -510,4 +520,9 @@ z_t   = simpleRevealObsModel2d(xt);
 z_d = z_t-z_hat;
 rmse = sqrt( (z_d'*z_d)/(length(z_d)/2));
 
+end
+
+function widerInterval = getWiderBounds(a,b)
+    span = b-a;
+    widerInterval = [a-0.1*span b+0.1*span];
 end
