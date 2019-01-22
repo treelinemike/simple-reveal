@@ -10,7 +10,8 @@ doIllustrateObs = 1;
 % choose an estimation scheme
 ESTIMATOR_EKF = 1;
 ESTIMATOR_EIF = 2;
-estimationScheme = ESTIMATOR_EKF;
+ESTIMATOR_PF  = 3;
+estimationScheme = ESTIMATOR_PF;
 
 % global flag for plot initialization
 global plotCallCount gh_patch gh_truth gh_est gh_rmse gh_truth_dot gh_est_dot revealLevels;
@@ -23,39 +24,125 @@ frameCount = 0;
 % data storage
 estError = [];
 obsCounts = zeros(3,1);
+P_hist = [];
+
 
 % initialize true state (x_t)
 xt = [ 0.25 0.35 0.45 0.65 -pi/6 pi/2 ]';
+N = length(xt);  % number of states
 
-% initialize state estimate (x) and covariance matrix (P)
+% initialize state estimate (x) 
 x0 = [ 0.35 0.25 0.55 0.55 pi/12 pi/3 ]';
 % x0 = [ 0.80 0.45 0.35 0.35 -9*pi/8 3*pi/2 ]';
 % x0 = [ 0.80 0.25 0.5 0.25 3*pi/8 pi/4 ]';
-P0 = diag([2 2 2 2 pi pi]); %1*ones(length(x0));%0.1*eye(length(x0));
 x_prev = x0;
+
+% initialize state estimate error covariance matrix (P)
+P0 = diag([0.2 0.2 0.2 0.2 2*pi/180 2*pi/180]);
 P_prev = P0;
+
+% initialize process and measurment noise covariance matrices
+Q = zeros(length(x0)); %diag([]); % process noise covariance (note: Thrun, et al. calls this R!)
+R = diag([0.5 0.5 0.5 0.5 0.5 0.5]); % measurement noise covariance (note: Thrun, et al. calls this Q!)
 
 % initalize information filter variables
 % initialize state and measurement covariances
 switch(estimationScheme)
     case ESTIMATOR_EKF
-        %         Q = 0.1*eye(length(x0)); % process noise covariance (note: Thrun, et al. calls this R!)
-        %         R = 0.1*eye(length(x0)); % measurement noise covariance (note: Thrun, et al. calls this Q!)
-        Q = zeros(length(x0)); %diag([]); % process noise covariance (note: Thrun, et al. calls this R!)
-        R = diag([0.5 0.5 0.5 0.5 0.5 0.5]); % measurement noise covariance (note: Thrun, et al. calls this Q!)
+        % no parameters to set
         
     case ESTIMATOR_EIF
         M_prev = eye(length(x_prev)); % Omega; Information matrix
         xi_prev = M_prev*x_prev;      % xi; information vector
-        Q = zeros(length(x0));
-        R = 0.01*eye(length(x0));
+        
+    case ESTIMATOR_PF
+        % set seed for random number generator
+        % to get repeatable output (for publication, etc.)
+        rng(17);
+        
+        % number of particles
+        M = 5^6;
+        
+        % generate an initial set of particles using Gaussian
+        % approximation/assumption
+        X = mvnrnd(x_prev,P_prev,M)';
+        
 end
 
-% iterate through horizon levels
+% display initial state and iterate through horizon levels
 revealLevels = 0:0.01:maxHorizonLevel;
+plotRevealModel2d( x_prev, xt, P_prev, revealLevels(1));
 for revealLevel = revealLevels
     
     switch(estimationScheme)
+        
+        case ESTIMATOR_EKF
+            
+            % compute Jacobian of state transition function
+            F = eye(length(x_prev));
+            
+            % PREDICTION STEP
+            % propigate dynamics and error covariance forward in time
+            x = x_prev;
+            P = F*P_prev*F' + Q;
+            
+            % compute measurement jacobian
+            H = [
+                1 0 0         0               0                    0;
+                0 1 0         0               0                    0;
+                1 0 cos(x(5)) 0              -x(3)*sin(x(5))       0;
+                0 1 sin(x(5)) 0               x(3)*cos(x(5))       0;
+                1 0 0         cos(x(5)+x(6)) -x(4)*sin(x(5)+x(6)) -x(4)*sin(x(5)+x(6));
+                0 1 0         sin(x(5)+x(6))  x(4)*cos(x(5)+x(6))  x(4)*cos(x(5)+x(6))
+                ];
+            
+            % generate an observation
+            z_full = simpleRevealObsModel2d( xt );     % full observation is an error-free measurement of all point (x,y) values
+            
+            % examine each (x,y) pair in the observation
+            for pointIdx = 1:(length(z_full)/2)
+                
+                % coordinates of the current (x,y) pair
+                xIdx = 2*pointIdx - 1;
+                yIdx = xIdx + 1;
+                
+                % create a 2-component observation vector, expected observation,
+                % and reduce the Jacobian of the measurement model appropriately
+                % an alternate approach would be to simply discard unobserved
+                % points from z_full and remove the corresponding rows from the
+                % H matrix to avoid incremental processing... I believe that this
+                % should have the same result
+                z_i =     [z_full(xIdx) z_full(yIdx)]';
+                z_hat_full = simpleRevealObsModel2d( x );  % expected observation based on current model; this could probably be pre-computed for each timestep (don't recalculate between measurement updates at same timestep) - think the approaches may be equivalent
+                z_hat_i = [z_hat_full(xIdx) z_hat_full(yIdx)]';
+                H_i = H([xIdx yIdx],:);
+                R_i = R([xIdx yIdx],[xIdx yIdx]);
+                
+                % push model along y axis to horizon if point not observed
+                if( (z_hat_i(2) <= revealLevel) && (z_i(2) > revealLevel) && doProjectUnobservedEstimatesToHorizon)
+                    disp('push update');
+                    delta_z = zeros(size(z_full));
+                    delta_z(yIdx) = revealRLevel-z_hat_full(yIdx);
+                    x_synth = x + H\delta_z;
+                    x = x_synth;
+                end
+                if((z_i(2) <= revealLevel))
+                    disp('normal update');
+                    % CORRECTION STEP
+                    % update state and error covariance
+                    K = P*H_i'/(H_i*P*H_i'+R_i);
+                    innov = (z_i - z_hat_i);
+                    x = x + K*innov;
+                    P = (eye(size(K,1))-K*H_i)*P;
+                end
+            end
+            
+            % increment to next timestep
+            disp('increment');
+            x_prev = x;
+            P = 1.04*P;  % inflate P to reduce overconfidence
+            P_prev = P;
+            
         case ESTIMATOR_EIF
             
             % PREDICT STEP
@@ -145,76 +232,106 @@ for revealLevel = revealLevels
             M_prev = M;
             xi_prev = xi;
             
-        case ESTIMATOR_EKF
+        case ESTIMATOR_PF
             
-            % compute Jacobian of state transition function
-            F = eye(length(x_prev));
+            % (re)initialize all weights and a priori particles to zero
+            q = zeros(M,1);
+            X_prior = zeros(N,M);
             
-            % PREDICTION STEP
-            % propigate dynamics and error covariance forward in time
-            x = x_prev;
-            P = F*P_prev*F' + Q;
+            % plot current particle set (2D, just location of elbow particle)
+            figure(3);
+            hold off;
+            plot(X(1,:),X(2,:),'b.','MarkerSize',20);
+            xlim([0 2]);
+            ylim([0 2]);
+            hold on;
+            plot(xt(1),xt(2),'ro','MarkerSize',10,'LineWidth',2);
+            plot(x0(1),x0(2),'k.','MarkerSize',20,'LineWidth',2);
             
-            % compute measurement jacobian
-            H = [
-                1 0 0         0               0                    0;
-                0 1 0         0               0                    0;
-                1 0 cos(x(5)) 0              -x(3)*sin(x(5))       0;
-                0 1 sin(x(5)) 0               x(3)*cos(x(5))       0;
-                1 0 0         cos(x(5)+x(6)) -x(4)*sin(x(5)+x(6)) -x(4)*sin(x(5)+x(6));
-                0 1 0         sin(x(5)+x(6))  x(4)*cos(x(5)+x(6))  x(4)*cos(x(5)+x(6))
-                ];
+            % get a measurement, subject to horizon/occlusion
+            z = simpleRevealObsModel2d( xt );
+            obs_mask = repelem(z(2:2:end,:) < revealLevel,2);
+            Rt = R(obs_mask,obs_mask);
             
-            % generate an observation
-            z_full = simpleRevealObsModel2d( xt );     % full observation is an error-free measurement of all point (x,y) values
-            
-            % examine each (x,y) pair in the observation
-            for pointIdx = 1:(length(z_full)/2)
+            % iterate filter only when we are processing a measurement (the
+            % time update is essentially the identity, i.e. forward dyanmics do nothing)
+            if(~isempty(Rt))
                 
-                % coordinates of the current (x,y) pair
-                xIdx = 2*pointIdx - 1;
-                yIdx = xIdx + 1;
-                
-                % create a 2-component observation vector, expected observation,
-                % and reduce the Jacobian of the measurement model appropriately
-                % an alternate approach would be to simply discard unobserved
-                % points from z_full and remove the corresponding rows from the
-                % H matrix to avoid incremental processing... I believe that this
-                % should have the same result
-                z_i =     [z_full(xIdx) z_full(yIdx)]';
-                z_hat_full = simpleRevealObsModel2d( x );  % expected observation based on current model; this could probably be pre-computed for each timestep (don't recalculate between measurement updates at same timestep) - think the approaches may be equivalent
-                z_hat_i = [z_hat_full(xIdx) z_hat_full(yIdx)]';
-                H_i = H([xIdx yIdx],:);
-                R_i = R([xIdx yIdx],[xIdx yIdx]);
-                
-                % push model along y axis to horizon if point not observed
-                if( (z_hat_i(2) <= revealLevel) && (z_i(2) > revealLevel) && doProjectUnobservedEstimatesToHorizon)
-                    disp('push update');
-                    delta_z = zeros(size(z_full));
-                    delta_z(yIdx) = revealRLevel-z_hat_full(yIdx);
-                    x_synth = x + H\delta_z;
-                    x = x_synth;
+                % loop through particles computing weights based on how well data fits
+                % model
+                for m = 1:M
+                    
+                    % get the appropriate particle
+                    x_prev = X(:,m);
+                    
+                    % compute proposal (prediction) for this particle
+                    x_prior = x_prev;  % identity transformation
+                    X_prior(:,m) = x_prior;
+                    
+                    % remove unobserved rows from innovation and R matrix
+                    z_hat = simpleRevealObsModel2d( x_prior );
+                    innov = z-z_hat;
+                    innov = innov(obs_mask);
+                                        
+                    % compute importance factor / weight
+                    % don't need constant coefficient b/c normalizing to sum to one
+                    % later...
+                    q(m) = exp( -0.5 * innov' * inv(Rt) * innov);  % the q vector incorporates MEASUREMENT data
+                    
                 end
-                if((z_i(2) <= revealLevel))
-                    disp('normal update');
-                    % CORRECTION STEP
-                    % update state and error covariance
-                    K = P*H_i'/(H_i*P*H_i'+R_i);
-                    innov = (z_i - z_hat_i);
-                    x = x + K*innov;
-                    P = (eye(size(K,1))-K*H_i)*P;
+                
+                % normalize weights
+                q = q/sum(q);
+                qCDF = cumsum(q);
+                
+                % starting point: Simon pg. 473: regularized particle filtering
+                % first sample particle based on their weights
+                x_post_idx = arrayfun(@(afin1) find(afin1 < qCDF,1,'first'), rand(M,1)-eps );  % eps subtracted from rand(M,1) to exclude exactly 1.0000... though this is extremely unlikely
+                X_post_prereg = X_prior(:,x_post_idx);
+                
+                % compute particle ensemble mean and covariance matrix
+                % mean
+                mu_prereg = mean(X_post_prereg,2); % equivalent to: (1/M)*sum(X_prior,2);
+                
+                % covariance
+                S_prereg = zeros(N);
+                for mIdx = 1:M
+                    S_prereg = S_prereg + (X_post_prereg(:,mIdx)-mu_prereg)*(X_post_prereg(:,mIdx)-mu_prereg)';
                 end
+                S_prereg = (1/(M-1))*S_prereg;
+                
+                % generate new posterior particles using Gaussian approximation to
+                % posterior
+                X_post = mvnrnd(mu_prereg,1.1*S_prereg,M)';
+                
+                % update with the posteriror particle set
+                X = X_post;   % THIS PREPARES PARTICLE SET FOR NEXT ITERATION
             end
             
-            % increment to next timestep
-            disp('increment');
-            x_prev = x;
-            P = 1.04*P;  % inflate P to reduce overconfidence
-            P_prev = P;
+            % mean of posterior particle set
+            mu_post = mean(X,2);
+            
+            % covariance of posterior particle set
+            P_post = zeros(N);
+            for mIdx = 1:M
+                P_post = P_post + (X(:,mIdx)-mu_post)*(X(:,mIdx)-mu_post)';
+            end
+            P_post = (1/(M-1))*P_post;
+            
+            % update x and P for plotting
+            x = mu_post;
+            P = P_post;
+            
+            % show new mean on particle scatter projection
+            figure(3)
+            plot(mu_post(1),mu_post(2),'m*','MarkerSize',20);
             
         otherwise
             disp('Invalid assimilation algorithm choice.');
     end
+    
+    % store P
+    P_hist(end+1,:) = reshape(P',[],1)';
     
     % display current estimate and true state
     plotRevealModel2d( x, xt, P, revealLevel);
@@ -237,9 +354,23 @@ for revealLevel = revealLevels
         case ESTIMATOR_EIF
             image(M);
     end
-   
-%     pause(2)
     
+    %     pause(2)
+    
+end
+
+
+% display P
+figure;
+set(gcf,'Position',[0069 0065 1.262400e+03 6.696000e+02]);
+for plotIdx = 1:size(P_hist,2)
+    rowNum = ceil(plotIdx/N);
+    colNum = mod(plotIdx-1,N)+1;
+    if( colNum >= rowNum)
+        subplot(size(P,1),size(P,2),plotIdx);
+        plot(P_hist(:,plotIdx),'b-','LineWidth',1.6);
+        hold on; grid on;
+    end
 end
 
 

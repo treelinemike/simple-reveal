@@ -3,138 +3,158 @@
 % restart
 close all; clear all; clc;
 
-% set seed for random number generator
-% to get repeatable output (for publication, etc.)
-rng(17);
-
 % global flag for plot initialization
 global plotCallCount gh_patch gh_truth gh_est gh_rmse gh_truth_dot gh_est_dot revealLevels;
 plotCallCount = 0;
 revealLevels = 0:0.01:1;
 maxHorizonLevel = 1.0;
 
-M = 5^6; % number of particles
-
 % initialize true state (x_t)
 xt = [ 0.25 0.35 0.45 0.65 -pi/6 pi/2 ]';
-
 N = length(xt);  % number of states
 
 % initialize state estimate (x)
 % x0 = [ 0.35 0.25 0.55 0.55 pi/12 pi/3 ]';
 % x0 = [ 0.80 0.45 0.35 0.35 -9*pi/8 3*pi/2 ]';
 x0 = [ 0.80 0.25 0.5 0.25 3*pi/8 pi/4 ]';
-x = x0;
+x_prev = x0;
 
 % initialize state error covariance matrix (P)
 P0 = diag([0.2 0.2 0.2 0.2 2*pi/180 2*pi/180]);
-P = P0;
+P_prev = P0;
 
 % set measurement noise covariance (note: Thrun, et al. calls this Q!)
 R = diag([0.05 0.05 0.05 0.05 0.05 0.05]);
 
+% storage for estimator error covariance
+P_hist = [];
+
+% set seed for random number generator
+% to get repeatable output (for publication, etc.)
+rng(17);
+
+% number of particles
+M = 5^6;
+
 % generate an initial set of particles using Gaussian
 % approximation/assumption
-X = mvnrnd(x,P,M)';
-
-% display initial state
-
+X = mvnrnd(x_prev,P_prev,M)';
 
 % run repeated observations & display initial state
 revealLevels = 0:0.01:maxHorizonLevel;
-plotRevealModel2d( x, xt, P, revealLevels(1));
+plotRevealModel2d( x_prev, xt, P_prev, revealLevels(1));
 for revealLevel = revealLevels
-    for repeatObsIdx = 1:1
-        % initialize all weights and a priori particles to zero
-        q = zeros(M,1);
-        X_prior = zeros(N,M);
+    % initialize all weights and a priori particles to zero
+    q = zeros(M,1);
+    X_prior = zeros(N,M);
+    
+    
+    % plot current particle set (2D, just location of elbow particle)
+    figure(3);
+    hold off;
+    plot(X(1,:),X(2,:),'b.','MarkerSize',20);
+    xlim([0 2]);
+    ylim([0 2]);
+    hold on;
+    plot(xt(1),xt(2),'ro','MarkerSize',10,'LineWidth',2);
+    plot(x0(1),x0(2),'k.','MarkerSize',20,'LineWidth',2);
+    
+    
+    % get a measurement
+    z = simpleRevealObsModel2d( xt );
+    obs_mask = repelem(z(2:2:end,:) < revealLevel,2);
+    Rt = R(obs_mask,obs_mask);
+    if(~isempty(Rt))
         
-        
-        % plot current particle set (2D, just location of elbow particle)
-        figure(2);
-        hold off;
-        plot(X(1,:),X(2,:),'b.','MarkerSize',20);
-        xlim([0 2]);
-        ylim([0 2]);
-        hold on;
-        plot(xt(1),xt(2),'ro','MarkerSize',10,'LineWidth',2);
-        plot(x0(1),x0(2),'k.','MarkerSize',20,'LineWidth',2);
-        
-        
-        % get a measurement
-        z = simpleRevealObsModel2d( xt );
-        obs_mask = repelem(z(2:2:end,:) < revealLevel,2);
-        Rt = R(obs_mask,obs_mask);
-        if(~isempty(Rt))
+        % loop through particles computing weights based on how well data fits
+        % model
+        for m = 1:M
             
-            % loop through particles computing weights based on how well data fits
-            % model
-            for m = 1:M
-                
-                % get the appropriate particle
-                x_prev = X(:,m);
-                
-                % compute proposal (prediction) for this particle
-                x_prior = x_prev;  % identity transformation
-                X_prior(:,m) = x_prior;
-                
-                % remove unobserved rows from innovation and R matrix
-                z_hat = simpleRevealObsModel2d( x_prior );
-                innov = z-z_hat;
-                innov = innov(obs_mask);
-                
-                
-                % compute importance factor
-                % don't need constant coefficient b/c normalizing to sum to one
-                % later...
-                q(m) = exp( -0.5 * innov' * inv(Rt) * innov);  % the q vector incorporates MEASUREMENT data
-                
-            end
+            % get the appropriate particle
+            x_prev = X(:,m);
             
-            % normalize weights
-            q = q/sum(q);
-            qCDF = cumsum(q);
+            % compute proposal (prediction) for this particle
+            x_prior = x_prev;  % identity transformation
+            X_prior(:,m) = x_prior;
+            
+            % remove unobserved rows from innovation and R matrix
+            z_hat = simpleRevealObsModel2d( x_prior );
+            innov = z-z_hat;
+            innov = innov(obs_mask);
             
             
+            % compute importance factor
+            % don't need constant coefficient b/c normalizing to sum to one
+            % later...
+            q(m) = exp( -0.5 * innov' * inv(Rt) * innov);  % the q vector incorporates MEASUREMENT data
             
-            % starting point: Simon pg. 473: regularized particle filtering
-            
-            
-            % sample particle based on their weights
-            x_post_idx = arrayfun(@(afin1) find(afin1 < qCDF,1,'first'), rand(M,1)-eps );  % eps subtracted from rand(M,1) to exclude exactly 1.0000... though this is extremely unlikely
-            X_post_prereg = X_prior(:,x_post_idx);
-            
-            
-            % compute particle ensemble mean and covariance matrix
-            
-            % mean
-            mu = mean(X_post_prereg,2); % equivalent to: (1/M)*sum(X_prior,2);
-            
-            % covariance
-            S = zeros(N);
-            for mIdx = 1:M
-                S = S + (X_post_prereg(:,mIdx)-mu)*(X_post_prereg(:,mIdx)-mu)';
-            end
-            S = (1/(M-1))*S;
-            
-            % generate new posterior particles using Gaussian approximation to
-            % posterior
-            X_post = mvnrnd(mu,1.1*S,M)';           
-            
-            % update particle set
-            X = X_post;
         end
         
-        x_post = mean(X,2);
+        % normalize weights
+        q = q/sum(q);
+        qCDF = cumsum(q);
         
-        % show new mean
-        figure(2)
-        plot(x_post(1),x_post(2),'m*','MarkerSize',20);
         
-        % display result
-        plotRevealModel2d( x_post, xt, P, revealLevel);
-        drawnow;
         
+        % starting point: Simon pg. 473: regularized particle filtering
+        % sample particle based on their weights
+        x_post_idx = arrayfun(@(afin1) find(afin1 < qCDF,1,'first'), rand(M,1)-eps );  % eps subtracted from rand(M,1) to exclude exactly 1.0000... though this is extremely unlikely
+        X_post_prereg = X_prior(:,x_post_idx);
+        
+        
+        % compute particle ensemble mean and covariance matrix
+        % mean
+        mu_prereg = mean(X_post_prereg,2); % equivalent to: (1/M)*sum(X_prior,2);
+        
+        % covariance
+        S_prereg = zeros(N);
+        for mIdx = 1:M
+            S_prereg = S_prereg + (X_post_prereg(:,mIdx)-mu_prereg)*(X_post_prereg(:,mIdx)-mu_prereg)';
+        end
+        S_prereg = (1/(M-1))*S_prereg;
+        
+        % generate new posterior particles using Gaussian approximation to
+        % posterior
+        X_post = mvnrnd(mu_prereg,1.1*S_prereg,M)';
+        
+        % update particle set
+        X = X_post;
+    end
+    
+    % mean of posterior particle set
+    mu_post = mean(X,2);
+    
+    % covariance of posterior particle set
+    P_post = zeros(N);
+    for mIdx = 1:M
+        P_post = P_post + (X(:,mIdx)-mu_post)*(X(:,mIdx)-mu_post)';
+    end
+    P_post = (1/(M-1))*P_post;
+    P = P_post;
+    
+    % show new mean
+    figure(3)
+    plot(mu_post(1),mu_post(2),'m*','MarkerSize',20);
+    
+    % display result
+    plotRevealModel2d( mu_post, xt, P, revealLevel);
+    drawnow;
+    
+    % store P
+    P_hist(end+1,:) = reshape(P',[],1)';
+    
+    
+end
+
+% display P
+figure;
+set(gcf,'Position',[0069 0065 1.262400e+03 6.696000e+02]);
+for plotIdx = 1:size(P_hist,2)
+    rowNum = ceil(plotIdx/N);
+    colNum = mod(plotIdx-1,N)+1;
+    if( colNum >= rowNum)subplot(size(P,1),size(P,2),plotIdx);
+        plot(P_hist(:,plotIdx),'b-','LineWidth',1.6);
+        hold on; grid on;
     end
 end
 
