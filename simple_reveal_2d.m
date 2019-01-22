@@ -4,43 +4,52 @@ close all; clear all; clc;
 % settings
 maxHorizonLevel = 1.0;
 doSaveFrames = 0;
-doProjectUnobservedEstimatesToHorizon = 1;
 doIllustrateObs = 0;   % for EIF
+doSaveMATFile = 1;
 
-% choose an estimation scheme
+% estimation scheme identifiers (essentially an enum)
 ESTIMATOR_EKF = 1;
 ESTIMATOR_EIF = 2;
 ESTIMATOR_PF  = 3;
-estimationScheme = ESTIMATOR_EKF;
+
+% choose an estimation scheme
+estimationScheme = ESTIMATOR_PF;
+
+% for EKF only: choose whether to handle neg. info. by projection
+doProjectUnobservedEstimatesToHorizon = 0;
+
+% choose an initial condition
+icIdx = 3;
 
 % global flag for plot initialization
 global plotCallCount gh_patch gh_truth gh_est gh_rmse gh_truth_dot gh_est_dot revealLevels;
 plotCallCount = 0;
-
-% initialize frame count
-frameCount = 0;
 
 % data storage
 estError = [];
 P_hist = [];
 obs_hist = [];
 
+% initialize frame count (for storing frames to make animation)
+frameCount = 0;
 
 % initialize true state (x_t)
 xt = [ 0.25 0.35 0.45 0.65 -pi/6 pi/2 ]';
 N = length(xt);  % number of states
 
 % state bounds (for random generation)
-% formatted for using rmvrnd() from Tim Benham on MATLAB Central:
+% formatted for using rmvnrnd() from Tim Benham on MATLAB Central:
 % https://www.mathworks.com/matlabcentral/fileexchange/34402-truncated-multivariate-normal
 % format [ -x1_lower -x2_lower ... -x6_lower x1_upper x2_upper ... x6_upper]'
 % NOTE: negative signs on lower bounds! if region is -1 to 1, result is [1 1] (both positive!)
 stateBounds = [1 1 0 0 3*pi/2 3*pi/2 1 1 2 2 3*pi/2 3*pi/2]';
 
 % initialize state estimate (x)
-% x0 = [ 0.35 0.25 0.55 0.55 pi/12 pi/3 ]';
-% x0 = [ 0.80 0.45 0.35 0.35 -9*pi/8 3*pi/2 ]';
-x0 = [ 0.80 0.25 0.5 0.25 3*pi/8 pi/4 ]';
+ic1 = [ 0.35 0.25 0.55 0.55 pi/12 pi/3 ]';
+ic2 = [ 0.80 0.45 0.35 0.35 -9*pi/8 3*pi/2 ]';
+ic3 = [ 0.80 0.25 0.5 0.25 3*pi/8 pi/4 ]';
+ics = [ic1, ic2, ic3];
+x0 = ics(:,icIdx);
 x_prev = x0;
 
 % initialize state estimate error covariance matrix (P)
@@ -346,7 +355,11 @@ for revealLevel = revealLevels
                 % generate new posterior particles using Gaussian approximation to
                 % posterior
                 %                 X_post = mvnrnd(mu_prereg,1.1*S_prereg,M)';
-                X_post = rmvnrnd(mu_prereg,1.04*S_prereg,M,[-eye(6);eye(6)],stateBounds)';
+%                 S_adj = S_prereg-diag(diag(S_prereg))+1.04*diag(diag(S_prereg));
+               S_adj = 1.04*S_prereg;
+               X_post = rmvnrnd(mu_prereg,S_adj,M,[-eye(6);eye(6)],stateBounds)';
+ 
+                %                 X_post = rmvnrnd(mu_prereg,1.04*S_prereg,M,[-eye(6);eye(6)],stateBounds)';
                 
                 % update with the posteriror particle set
                 X = X_post;   % THIS PREPARES PARTICLE SET FOR NEXT ITERATION
@@ -403,7 +416,6 @@ for revealLevel = revealLevels
     
 end
 
-
 % display error covariance trends
 newObsIdx = arrayfun(@(idxloc) find(obs_hist(idxloc,:)>0,1,'first'),1:3);
 figure;
@@ -421,6 +433,25 @@ for plotIdx = 1:size(P_hist,2)
     end
 end
 
+% extract RMSE and save
+if(doSaveMATFile)
+rmse = gh_rmse.YData;
+matFileName = 'rmse_';
+switch(estimationScheme)
+    case ESTIMATOR_EKF
+        matFileName = [matFileName 'ekf_'];
+    case ESTIMATOR_EIF
+        matFileName = [matFileName 'eif_'];
+    case ESTIMATOR_PF
+        matFileName = [matFileName 'pf_'];
+end
+if(~doProjectUnobservedEstimatesToHorizon)
+    matFileName = [matFileName 'no'];
+end
+matFileName = [matFileName 'proj_ic'];
+matFileName = [matFileName num2str(icIdx)];
+save(matFileName,'rmse','P_hist','newObsIdx');
+end
 
 % convert model parameters into (x,y) locations of each point
 function z = simpleRevealObsModel2d( x )
