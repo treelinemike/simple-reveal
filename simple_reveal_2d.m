@@ -4,14 +4,14 @@ close all; clear all; clc;
 % settings
 maxHorizonLevel = 1.0;
 doSaveFrames = 0;
-doProjectUnobservedEstimatesToHorizon = 0;
-doIllustrateObs = 1;
+doProjectUnobservedEstimatesToHorizon = 1;
+doIllustrateObs = 0;   % for EIF
 
 % choose an estimation scheme
 ESTIMATOR_EKF = 1;
 ESTIMATOR_EIF = 2;
 ESTIMATOR_PF  = 3;
-estimationScheme = ESTIMATOR_PF;
+estimationScheme = ESTIMATOR_EKF;
 
 % global flag for plot initialization
 global plotCallCount gh_patch gh_truth gh_est gh_rmse gh_truth_dot gh_est_dot revealLevels;
@@ -35,7 +35,7 @@ N = length(xt);  % number of states
 % https://www.mathworks.com/matlabcentral/fileexchange/34402-truncated-multivariate-normal
 % format [ -x1_lower -x2_lower ... -x6_lower x1_upper x2_upper ... x6_upper]'
 % NOTE: negative signs on lower bounds! if region is -1 to 1, result is [1 1] (both positive!)
-stateBounds = [1 1 0 0 pi pi 1 1 2 2 pi pi]';
+stateBounds = [1 1 0 0 3*pi/2 3*pi/2 1 1 2 2 3*pi/2 3*pi/2]';
 
 % initialize state estimate (x)
 % x0 = [ 0.35 0.25 0.55 0.55 pi/12 pi/3 ]';
@@ -133,14 +133,14 @@ for revealLevel = revealLevels
                 
                 % push model along y axis to horizon if point not observed
                 if( (z_hat_i(2) <= revealLevel) && (z_i(2) > revealLevel) && doProjectUnobservedEstimatesToHorizon)
-                    disp('push update');
+%                     disp('push update');
                     delta_z = zeros(size(z_full));
-                    delta_z(yIdx) = revealRLevel-z_hat_full(yIdx);
+                    delta_z(yIdx) = revealLevel-z_hat_full(yIdx);
                     x_synth = x + H\delta_z;
                     x = x_synth;
                 end
                 if((z_i(2) <= revealLevel))
-                    disp('normal update');
+%                     disp('normal update');
                     % CORRECTION STEP
                     % update state and error covariance
                     K = P*H_i'/(H_i*P*H_i'+R_i);
@@ -234,7 +234,7 @@ for revealLevel = revealLevels
             % CORRECTION STEP
             % apply measurement update if we actually made measurements
             if(sumIdx ~= 0)
-                disp('applying updates');
+%                 disp('applying updates');
                 M = M + Msum;
                 xi = xi + xisum;
             end
@@ -414,11 +414,10 @@ for plotIdx = 1:size(P_hist,2)
     if( colNum >= rowNum)
         subplot(size(P,1),size(P,2),plotIdx);
         hold on; grid on;
-        plot(P_hist(:,plotIdx),'b-','LineWidth',1.6);
+        plot(revealLevels',P_hist(:,plotIdx),'b-','LineWidth',1.6);
         for obsIdx = newObsIdx
-            plot([obsIdx obsIdx],get(gca,'YLim'),'r--');
+            plot(revealLevels([obsIdx obsIdx]),get(gca,'YLim'),'m--');
         end
-
     end
 end
 
