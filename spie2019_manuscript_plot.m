@@ -19,11 +19,11 @@ ekfp3 = load('rmse_ekf_proj_ic3.mat');
 eif1 = load('rmse_eif_noproj_ic1.mat');
 eif2 = load('rmse_eif_noproj_ic2.mat');
 eif3 = load('rmse_eif_noproj_ic3.mat');
- 
+
 pf1 = load('rmse_pf_noproj_ic1.mat');
 pf2 = load('rmse_pf_noproj_ic2.mat');
 pf3 = load('rmse_pf_noproj_ic3.mat');
- 
+
 icData = {};
 icData{end+1} = [revealLevels' ekf1.rmse' ekfp1.rmse' eif1.rmse' pf1.rmse'];
 icData{end+1} = [revealLevels' ekf2.rmse' ekfp2.rmse' eif2.rmse' pf2.rmse'];
@@ -53,10 +53,54 @@ linkaxes(ax,'y');
 subplot(1,length(icData),1);
 legend('EKF','EKF w/ Projection','EIF','PF','Location','northwest');
 
-
+% plot initial conditions to display with RMSE results
 plotRevealModel2d(ic1,xt);
 plotRevealModel2d(ic2,xt);
 plotRevealModel2d(ic3,xt);
+
+
+% display error covariance trends
+eif_hist{1} = eif1.P_hist;
+eif_hist{2} = eif2.P_hist;
+eif_hist{3} = eif3.P_hist;
+ekf_hist{1} = ekf1.P_hist;
+ekf_hist{2} = ekf2.P_hist;
+ekf_hist{3} = ekf3.P_hist;
+ekfp_hist{1} = ekfp1.P_hist;
+ekfp_hist{2} = ekfp2.P_hist;
+ekfp_hist{3} = ekfp3.P_hist;
+pf_hist{1} = pf1.P_hist;
+pf_hist{2} = pf2.P_hist;
+pf_hist{3} = pf3.P_hist;
+
+%%
+newObsIdx = ekf1.newObsIdx;  % note: they should all be the same!
+for icIdx = 1:3
+    figure;
+    set(gcf,'Position',[0069 0065 1.262400e+03 6.696000e+02]);
+    Ncov = size(ekf1.P_hist,2);
+    N = sqrt(Ncov);
+    for plotIdx = 1:Ncov
+        rowNum = ceil(plotIdx/N);
+        colNum = mod(plotIdx-1,N)+1;
+        if( colNum >= rowNum)
+            subplot(N,N,plotIdx);
+            hold on; grid on;
+            ph = plot(revealLevels',ekf_hist{icIdx}(:,plotIdx),'LineWidth',2,'LineStyle',plotLineStyles{1});
+            ph(end+1) = plot(revealLevels',ekfp_hist{icIdx}(:,plotIdx),'LineWidth',2,'LineStyle',plotLineStyles{2});
+            ph(end+1) = plot(revealLevels',eif_hist{icIdx}(:,plotIdx),'LineWidth',2,'LineStyle',plotLineStyles{3});
+            ph(end+1) = plot(revealLevels',pf_hist{icIdx}(:,plotIdx),'LineWidth',2,'LineStyle',plotLineStyles{4});
+            
+            if(plotIdx == 1)
+                legend(ph,{'EKF','EKF w/ Projection','EIF','PF'},'AutoUpdate','off');
+            end
+            for obsIdx = newObsIdx
+                plot(revealLevels([obsIdx obsIdx]),get(gca,'YLim'),'m--');
+            end
+        end
+    end
+end
+%%
 
 % convert model parameters into (x,y) locations of each point
 function z = simpleRevealObsModel2d( x )
