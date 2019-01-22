@@ -22,8 +22,9 @@ frameCount = 0;
 
 % data storage
 estError = [];
-obsCounts = zeros(3,1);
 P_hist = [];
+obs_hist = [];
+
 
 % initialize true state (x_t)
 xt = [ 0.25 0.35 0.45 0.65 -pi/6 pi/2 ]';
@@ -36,7 +37,7 @@ N = length(xt);  % number of states
 % NOTE: negative signs on lower bounds! if region is -1 to 1, result is [1 1] (both positive!)
 stateBounds = [1 1 0 0 pi pi 1 1 2 2 pi pi]';
 
-% initialize state estimate (x) 
+% initialize state estimate (x)
 % x0 = [ 0.35 0.25 0.55 0.55 pi/12 pi/3 ]';
 % x0 = [ 0.80 0.45 0.35 0.35 -9*pi/8 3*pi/2 ]';
 x0 = [ 0.80 0.25 0.5 0.25 3*pi/8 pi/4 ]';
@@ -70,15 +71,21 @@ switch(estimationScheme)
         
         % generate an initial set of particles using Gaussian
         % approximation/assumption
-%         X = mvnrnd(x_prev,P_prev,M)';
+        %         X = mvnrnd(x_prev,P_prev,M)';
         X = rmvnrnd(x_prev,P_prev,M,[-eye(6);eye(6)],stateBounds)';
         
 end
 
 % display initial state and iterate through horizon levels
 revealLevels = 0:0.01:maxHorizonLevel;
-plotRevealModel2d( x_prev, xt, P_prev, revealLevels(1));
 for revealLevel = revealLevels
+    
+    % get a measurement, subject to horizon/occlusion
+    z = simpleRevealObsModel2d( xt );
+    obs_pts = z(2:2:end,:) < revealLevel;
+    obs_hist(:,end+1) = obs_pts;
+    obs_mask = repelem(obs_pts,2);
+    Rt = R(obs_mask,obs_mask);
     
     switch(estimationScheme)
         
@@ -144,7 +151,7 @@ for revealLevel = revealLevels
             end
             
             % inflate P to reduce overconfidence
-            P = 1.04*P;  
+            P = 1.04*P;
             
             % we will keep x and P around for now
             % they will be put into x_prev and P_prev outside of switch()
@@ -262,7 +269,7 @@ for revealLevel = revealLevels
             xlabel('x_0');
             ylabel('y_0');
             axis square;
-
+            
             subplot(1,3,2);
             hold off;
             plot(X(3,:),X(4,:),'b.','MarkerSize',20);
@@ -286,13 +293,8 @@ for revealLevel = revealLevels
             plot(x0(5),x0(6),'k.','MarkerSize',20,'LineWidth',2);
             plot(x_prev(5),x_prev(6),'m+','MarkerSize',10,'LineWidth',2);
             xlabel('\Theta_1');
-            ylabel('\Theta_2');     
+            ylabel('\Theta_2');
             axis square;
-            
-            % get a measurement, subject to horizon/occlusion
-            z = simpleRevealObsModel2d( xt );
-            obs_mask = repelem(z(2:2:end,:) < revealLevel,2);
-            Rt = R(obs_mask,obs_mask);
             
             % iterate filter only when we are processing a measurement (the
             % time update is essentially the identity, i.e. forward dyanmics do nothing)
@@ -313,7 +315,7 @@ for revealLevel = revealLevels
                     z_hat = simpleRevealObsModel2d( x_prior );
                     innov = z-z_hat;
                     innov = innov(obs_mask);
-                                        
+                    
                     % compute importance factor / weight
                     % don't need constant coefficient b/c normalizing to sum to one
                     % later...
@@ -343,7 +345,7 @@ for revealLevel = revealLevels
                 
                 % generate new posterior particles using Gaussian approximation to
                 % posterior
-%                 X_post = mvnrnd(mu_prereg,1.1*S_prereg,M)';
+                %                 X_post = mvnrnd(mu_prereg,1.1*S_prereg,M)';
                 X_post = rmvnrnd(mu_prereg,1.04*S_prereg,M,[-eye(6);eye(6)],stateBounds)';
                 
                 % update with the posteriror particle set
@@ -403,6 +405,7 @@ end
 
 
 % display error covariance trends
+newObsIdx = arrayfun(@(idxloc) find(obs_hist(idxloc,:)>0,1,'first'),1:3);
 figure;
 set(gcf,'Position',[0069 0065 1.262400e+03 6.696000e+02]);
 for plotIdx = 1:size(P_hist,2)
@@ -410,8 +413,12 @@ for plotIdx = 1:size(P_hist,2)
     colNum = mod(plotIdx-1,N)+1;
     if( colNum >= rowNum)
         subplot(size(P,1),size(P,2),plotIdx);
-        plot(P_hist(:,plotIdx),'b-','LineWidth',1.6);
         hold on; grid on;
+        plot(P_hist(:,plotIdx),'b-','LineWidth',1.6);
+        for obsIdx = newObsIdx
+            plot([obsIdx obsIdx],get(gca,'YLim'),'r--');
+        end
+
     end
 end
 
@@ -522,7 +529,8 @@ rmse = sqrt( (z_d'*z_d)/(length(z_d)/2));
 
 end
 
+% add a 10% margin to xlim() or ylim()
 function widerInterval = getWiderBounds(a,b)
-    span = b-a;
-    widerInterval = [a-0.1*span b+0.1*span];
+span = b-a;
+widerInterval = [a-0.1*span b+0.1*span];
 end
