@@ -2,7 +2,7 @@
 close all; clear all; clc;
 
 % settings
-maxHorizonLevel = 1.0;
+maxHorizonLevel = 1.3;
 doSaveFrames = 0;
 doIllustrateObs = 0;   % for EIF
 doSaveMATFile = 1;
@@ -13,16 +13,16 @@ ESTIMATOR_EIF = 2;
 ESTIMATOR_PF  = 3;
 
 % choose an estimation scheme
-estimationScheme = ESTIMATOR_PF;
+estimationScheme = ESTIMATOR_EKF;
 
 % for EKF only: choose whether to handle neg. info. by projection
-doProjectUnobservedEstimatesToHorizon = 0;
+doProjectUnobservedEstimatesToHorizon = 1;
 
 % choose an initial condition
-icIdx = 3;
+icIdx = 1;
 
 % global flag for plot initialization
-global plotCallCount gh_patch gh_truth gh_est gh_rmse gh_truth_dot gh_est_dot revealLevels;
+global plotCallCount gh_patch gh_truth gh_est gh_rmse gh_truth_dot gh_est_dot revealLevels gh_kidtrue gh_kidmodel;
 plotCallCount = 0;
 
 % data storage
@@ -34,7 +34,7 @@ obs_hist = [];
 frameCount = 0;
 
 % initialize true state (x_t)
-xt = [ 0.25 0.35 0.45 0.65 -pi/6 pi/2 ]';
+xt = [ 0.25 0.35 0.45 0.55 -pi/6 pi/2 ]';
 N = length(xt);  % number of states
 
 % state bounds (for random generation)
@@ -453,6 +453,12 @@ matFileName = [matFileName num2str(icIdx)];
 save(matFileName,'rmse','P_hist','newObsIdx');
 end
 
+% generate video
+if(doSaveFrames)
+    system('ffmpeg -y -r 20 -start_number 1 -i frame%003d.png -vf scale="trunc(iw/2)*2:trunc(ih/2)*2" -c:v libx264 -profile:v high -pix_fmt yuv420p -g 25 -r 25 output.mp4');
+    system('del frame*.png');
+end
+
 % convert model parameters into (x,y) locations of each point
 function z = simpleRevealObsModel2d( x )
 
@@ -470,12 +476,12 @@ end
 % display estimated and true models along with current level of occlusion
 function plotRevealModel2d( estParams, trueParams, P, horizonLevel)
 
-global plotCallCount gh_patch gh_truth gh_est gh_rmse gh_truth_dot gh_est_dot revealLevels;
+global plotCallCount gh_patch gh_truth gh_est gh_rmse gh_truth_dot gh_est_dot revealLevels gh_kidtrue gh_kidmodel;
 
 % compute observations and RMSE
 z_truth = simpleRevealObsModel2d(trueParams);
 z_est = simpleRevealObsModel2d(estParams);
-rmse = computeReveal2dError(estParams, trueParams);
+rmse =  computeReveal2dError(estParams, trueParams);
 
 % activate animation figure
 figure(1);
@@ -487,18 +493,28 @@ if(~plotCallCount)
     subplot(4,1,1:3);
     hold on; grid on;
     % plot lines and occlusion patch
+    ktruedata = three_pt_kidney(z_truth,0.23);
+    gh_kidtrue = patch(ktruedata(:,1),ktruedata(:,2),'b','EdgeColor','none','FaceAlpha',0.2);
+    
+    kmodeldata = three_pt_kidney(z_est,0.23);
+    gh_kidmodel = patch(kmodeldata(:,1),kmodeldata(:,2),'r','EdgeColor','none','FaceAlpha',0.2);
+    
+    
     gh_truth = line(z_truth([5 1 3]),z_truth([6 2 4]),'Marker','.','MarkerSize',75,'LineStyle','-','Color',[0 0 1],'LineWidth',2.0);
     gh_truth_dot = line(z_truth(5),z_truth(6),'Marker','.','MarkerSize',25,'Color',[1 1 1]);
     gh_est = line(z_est([5 1 3]),z_est([6 2 4]),'Marker','.','MarkerSize',60,'LineStyle',':','Color',[1 0 0],'LineWidth',2.0);
     gh_est_dot = line(z_est(5),z_est(6),'Marker','.','MarkerSize',25,'Color',[1 1 1]);
-    gh_patch = patch([0 1 1 0], [horizonLevel horizonLevel 1.4 1.4],'k','FaceAlpha',0.2,'EdgeColor','none');
+    gh_patch = patch([-2 2 2 -2], [horizonLevel horizonLevel 1.4 1.4],'k','FaceAlpha',0.2,'EdgeColor','none');
     
+       
+
     % more plot configuraiton
     legh = legend([gh_truth gh_est gh_patch],{'Truth','Estimate','Occlusion'},'Location','northoutside','Orientation','horizontal','FontWeight','bold');
     legh.Position = legh.Position + [.015 -0.015 0 0.03];
-    ylim([0 1.2]);
-    % axis equal;
-    xlim([0 1]);
+    ylim([-0.3 1.5]);
+    axis equal;
+    xlim([-0.2 1.2]);
+%     axis equal
     axh = gca;
     axh.XAxis.Visible = 'off';
     axh.YAxis.Visible = 'off';
@@ -514,7 +530,7 @@ if(~plotCallCount)
     xlabel('\bfHorizon Level');
     ylabel('\bfRMSE');
     xlim([0 max(revealLevels)]);
-    ylim([0 0.65]);
+    ylim([0 0.3]);
     grid on;
 else
     % efficiently update animation plot on subsequent calls to plotRevealModel2d
@@ -529,6 +545,12 @@ else
     gh_patch.Vertices(1,2) = horizonLevel;
     gh_patch.Vertices(2,2) = horizonLevel;
     gh_rmse.YData(plotCallCount+1) = rmse;
+    ktruedata = three_pt_kidney(z_truth,0.23);
+    gh_kidtrue.Vertices = ktruedata;
+    gh_kidtrue.Faces = 1:size(ktruedata,1);
+    kmodeldata = three_pt_kidney(z_est,0.23);
+    gh_kidmodel.Vertices = kmodeldata;
+    gh_kidmodel.Faces = 1:size(kmodeldata,1);
 end
 
 
